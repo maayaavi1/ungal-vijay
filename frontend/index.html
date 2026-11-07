@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>உங்கள் விஜய்</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F7F6F1;
+  --text: #202923;
+  --muted: #5e6c62;
+  --green: #245B46;
+  --green-glow: rgba(36, 91, 70, 0.28);
+  --red: #C83D36;
+  --red-glow: rgba(200, 61, 54, 0.28);
+  --font: 'Plus Jakarta Sans', 'Noto Sans Tamil', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding-top: max(32px, env(safe-area-inset-top, 24px));
+  padding-bottom: max(36px, env(safe-area-inset-bottom, 24px));
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+/* 1. Centered Stacked Header: 72px Portrait + Title */
+.header-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  z-index: 10;
+  padding-top: 10px;
+}
+
+.avatar-frame {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 
+    0 1px 3px rgba(32, 41, 35, 0.08),
+    0 10px 24px -6px rgba(32, 41, 35, 0.16);
+  border: 1px solid rgba(32, 41, 35, 0.08);
+  background: #eae8e1;
+}
+
+.avatar-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 18%; /* Shifted down ~15% to reveal full forehead and face */
+  display: block;
+}
+
+.title-shimmer {
+  margin-top: 18px; /* +4px gap */
+  font-size: 1.28rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  background: linear-gradient(
+    110deg,
+    #202923 0%,
+    #202923 35%,
+    #5f776a 48%,
+    #8fb5a2 50%,
+    #5f776a 52%,
+    #202923 65%,
+    #202923 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: goldShimmer 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes goldShimmer {
+  0% { background-position: 120% 0; }
+  60% { background-position: -120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* 2. Middle Area (100% Unboxed) */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 480px;
+  position: relative;
+}
+
+/* State 1: Idle Prompt */
+.idle-prompt {
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+  max-width: 290px;
+  letter-spacing: -0.01em;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+body.call .idle-prompt {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  display: none;
+}
+
+/* State 2: Active Call Stage */
+.call-stage {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 22px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.call .call-stage {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Option 2 Equalizer Container (70% width, 25 Capsule Bars) */
+.equalizer-container {
+  width: 70%;
+  max-width: 320px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas#eq {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.subtitle-stream {
+  min-height: 48px;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.subtitle-text {
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+/* 3. Bottom Action Dock: Option 4 Velvet Core Button (62px) */
+footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  z-index: 10;
+}
+
+.action-stack {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  background: #1c251f;
+  box-shadow: 
+    0 2px 4px rgba(28, 37, 31, 0.12),
+    0 12px 28px -4px rgba(28, 37, 31, 0.28);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease, opacity 0.3s ease;
+}
+
+.action-btn:hover {
+  transform: scale(1.05);
+}
+
+.action-btn:active {
+  transform: scale(0.96);
+}
+
+/* Option 4: Internal Glowing Sound Core (20px) */
+.action-btn::before {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.btn-start::before {
+  background: var(--green);
+  box-shadow: 0 0 16px var(--green-glow);
+  animation: coreBreathe 2.6s ease-in-out infinite;
+}
+
+@keyframes coreBreathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+    box-shadow: 0 0 12px var(--green-glow);
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(36, 91, 70, 0.55);
+  }
+}
+
+.btn-end::before {
+  background: var(--red);
+  box-shadow: 0 0 16px var(--red-glow);
+}
+
+.action-btn svg {
+  position: relative;
+  z-index: 2;
+  width: 23px;
+  height: 23px;
+  fill: #FFFFFF;
+}
+
+/* Start / End Button State Visibility */
+.btn-start {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+body.call .btn-start {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
+}
+
+.btn-end {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
+}
+
+body.call .btn-end {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+/* Helper Text (+2px gap: 18px total, smaller size: 0.84rem) */
+.label-stack {
+  position: relative;
+  margin-top: 18px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-label {
+  position: absolute;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.label-start {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.call .label-start {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.label-end {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+body.call .label-end {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-shimmer, .btn-start::before { animation: none; }
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body class="idle">
+
+<div class="app-container">
+  <!-- 1. Centered Stacked Header: 72px Portrait + Title -->
+  <header class="header-lockup">
+    <div class="avatar-frame">
+      <img src="img/vijay.jpg" alt="Ungal Vijay" onerror="this.onerror=null; this.src='frontend/img/vijay.jpg';">
+    </div>
+    <h1 class="title-shimmer">உங்கள் விஜய்</h1>
+  </header>
+
+  <!-- 2. Middle Area (100% Unboxed) -->
+  <main>
+    <!-- State 1: Idle -->
+    <p class="idle-prompt">அரசு நலத்திட்டங்கள் பற்றி கேளுங்கள்</p>
+
+    <!-- State 2: Active Call -->
+    <div class="call-stage">
+      <div class="equalizer-container">
+        <canvas id="eq" aria-hidden="true"></canvas>
+      </div>
+      <div class="subtitle-stream">
+        <p class="subtitle-text" id="subs" aria-live="polite"></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- 3. Bottom Action Dock: Option 4 Velvet Core Button (62px) -->
+  <footer>
+    <div class="action-stack">
+      <button class="action-btn btn-start" id="btn-start" aria-label="இணைப்பைத் தொடங்கவும்">
+        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+      </button>
+      <button class="action-btn btn-end" id="btn-end" aria-label="இணைப்பைத் துண்டிக்கவும்">
+        <svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+      </button>
+    </div>
+    <div class="label-stack">
+      <span class="status-label label-start">இணைப்பைத் தொடங்கவும்</span>
+      <span class="status-label label-end">இணைப்பைத் துண்டிக்கவும்</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const body = document.body;
+  const cv = $('#eq');
+  const g = cv.getContext('2d');
+  const subs = $('#subs');
+
+  let ws, ac, stream, node, an, wake, raf, nextT = 0, active = false;
+  const sources = new Set();
+
+  const b64 = u8 => {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+
+  const unb64 = b => {
+    const s = atob(b), u = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+    return u;
+  };
+
+  const wsUrl = () => {
+    const p = new URLSearchParams(location.search).get('ws');
+    if (p) return p;
+    if (location.protocol === 'file:') return 'ws://localhost:8000/ws/call';
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    return proto + location.host + '/ws/call';
+  };
+
+  // Mic Worklet: Downsample native microphone rate -> 16kHz PCM Int16
+  const workletSrc = `class P extends AudioWorkletProcessor {
+    constructor() { super(); this.r = sampleRate / 16000; this.t = 0; this.a = 0; this.o = new Int16Array(1600); this.n = 0; }
+    process(i) {
+      const c = i[0][0]; if (!c) return true;
+      for (let k = 0; k < c.length; k++) {
+        this.a += c[k]; this.t++;
+        if (this.t >= this.r) {
+          let v = Math.max(-1, Math.min(1, this.a / this.t));
+          this.o[this.n++] = v < 0 ? v * 32768 : v * 32767;
+          this.a = 0; this.t -= this.r;
+          if (this.n === 1600) { this.port.postMessage(this.o.slice().buffer); this.n = 0; }
+        }
+      }
+      return true;
+    }
+  } registerProcessor('pcm', P);`;
+
+  // --------------------------------------------------------------------------
+  // Start Voice Call (Live Gemini Live 3.8 WebSocket)
+  // --------------------------------------------------------------------------
+  async function startCall() {
+    if (active) return;
+    active = true;
+
+    body.className = 'call';
+    subs.textContent = '';
+    sizeCanvas();
+    draw();
+
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      await ac.resume();
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
+      });
+
+      const blob = new Blob([workletSrc], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      await ac.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+
+      an = ac.createAnalyser();
+      an.fftSize = 128;
+      an.smoothingTimeConstant = 0.82;
+
+      const src = ac.createMediaStreamSource(stream);
+      node = new AudioWorkletNode(ac, 'pcm');
+      const mute = ac.createGain(); 
+      mute.gain.value = 0;
+
+      // Citizen mic feeds analyzer (for visual feedback) and worklet (for streaming)
+      src.connect(an);
+      src.connect(node);
+      node.connect(mute);
+      mute.connect(ac.destination);
+
+      node.port.onmessage = e => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64(new Uint8Array(e.data)) }));
+        }
+      };
+
+      ws = new WebSocket(wsUrl());
+      ws.onmessage = onMsg;
+      ws.onerror = err => {
+        console.error('WebSocket connection error:', err);
+      };
+      ws.onclose = () => {
+        if (active) endCall();
+      };
+    } catch (err) {
+      console.error('Microphone or Audio initialization failed:', err);
+      endCall();
+    }
+
+    try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
+  }
+
+  // --------------------------------------------------------------------------
+  // End Voice Call
+  // --------------------------------------------------------------------------
+  function endCall() {
+    if (!active && body.className === 'idle') return;
+    active = false;
+
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'call.hangup' }));
+      }
+    } catch (e) {}
+    try { ws && ws.close(); } catch (e) {}
+
+    stopAudio();
+
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+    try { node && node.disconnect(); } catch (e) {}
+    try { ac && ac.close(); } catch (e) {}
+    try { wake && wake.release(); } catch (e) {}
+
+    cancelAnimationFrame(raf);
+    ws = ac = stream = node = an = wake = null;
+
+    body.className = 'idle';
+    setTimeout(() => { if (!active) subs.textContent = ''; }, 350);
+  }
+
+  // --------------------------------------------------------------------------
+  // Handle Server Events from Python Bridge
+  // --------------------------------------------------------------------------
+  function onMsg(ev) {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+
+    if (m.type === 'audio_delta' && m.delta) {
+      playAudio(m.delta);
+    } else if (m.type === 'ai_transcript_delta') {
+      subs.textContent += m.delta || '';
+    } else if (m.type === 'interrupted') {
+      stopAudio();
+    } else if (m.type === 'error') {
+      console.error('Server error:', m.message);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Playback 24kHz PCM Int16 Audio from Gemini
+  // --------------------------------------------------------------------------
+  function playAudio(b) {
+    if (!ac) return;
+    const u = unb64(b), n = u.length >> 1;
+    if (!n) return;
+    const dv = new DataView(u.buffer), buf = ac.createBuffer(1, n, 24000), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = dv.getInt16(i * 2, true) / 32768;
+
+    const s = ac.createBufferSource();
+    s.buffer = buf;
+    s.connect(ac.destination);
+    if (an) s.connect(an); // Equalizer responds to incoming voice too
+
+    nextT = Math.max(nextT, ac.currentTime + 0.04);
+    s.start(nextT);
+    nextT += buf.duration;
+
+    sources.add(s);
+    s.onended = () => sources.delete(s);
+  }
+
+  function stopAudio() {
+    sources.forEach(s => { s.onended = null; try { s.stop(); } catch (e) {} });
+    sources.clear();
+    nextT = 0;
+  }
+
+  // --------------------------------------------------------------------------
+  // Equalizer: Option 2 Fading Capsule Bars (25 Pills with Gradient)
+  // --------------------------------------------------------------------------
+  const BAR_COUNT = 25;
+  const smoothed = new Float32Array(BAR_COUNT);
+  let W = 0, H = 0;
+
+  function sizeCanvas() {
+    const r = window.devicePixelRatio || 1;
+    W = cv.clientWidth;
+    H = cv.clientHeight;
+    cv.width = W * r;
+    cv.height = H * r;
+    g.setTransform(r, 0, 0, r, 0, 0);
+  }
+
+  function draw(t = 0) {
+    raf = requestAnimationFrame(draw);
+    g.clearRect(0, 0, W, H);
+
+    // Muted Government Green gradient (#4e9a7b -> #245B46 -> #1a4233)
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#4e9a7b');
+    grad.addColorStop(0.5, '#245B46');
+    grad.addColorStop(1, '#1a4233');
+    g.fillStyle = grad;
+
+    const gap = W / BAR_COUNT;
+    const barWidth = Math.max(3.5, gap * 0.44);
+    const mid = (BAR_COUNT - 1) / 2;
+
+    let data;
+    if (an) {
+      data = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(data);
+    }
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const distFromCenter = Math.abs(i - mid) / mid;
+      let energy = 0;
+
+      if (data) {
+        const binIdx = Math.min(data.length - 1, 1 + Math.floor(Math.pow(1 - distFromCenter, 0.8) * 36));
+        energy = data[binIdx] / 255;
+      }
+
+      // Elegant resting ripple when silent, responsive burst on speech
+      const idle = 4 + 2.5 * Math.sin(t / 380 + i * 0.45);
+      const targetHeight = Math.max(idle, Math.pow(energy, 1.25) * H * 0.9 * (1 - distFromCenter * 0.22));
+
+      smoothed[i] += (targetHeight - smoothed[i]) * 0.32;
+      const barHeight = Math.max(4, Math.min(H, smoothed[i]));
+
+      const x = i * gap + (gap - barWidth) / 2;
+      const y = (H - barHeight) / 2;
+      const radius = barWidth / 2;
+
+      g.beginPath();
+      if (g.roundRect) {
+        g.roundRect(x, y, barWidth, barHeight, radius);
+      } else {
+        g.rect(x, y, barWidth, barHeight);
+      }
+      g.fill();
+    }
+  }
+
+  $('#btn-start').addEventListener('click', startCall);
+  $('#btn-end').addEventListener('click', endCall);
+  window.addEventListener('resize', () => active && sizeCanvas());
+})();
+</script>
+</body>
+</html>

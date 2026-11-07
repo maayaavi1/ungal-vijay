@@ -1,0 +1,26 @@
+# Secrets and environment configurations
+.env
+*.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Python bytecode and environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+build/
+dist/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
