@@ -410,51 +410,54 @@ async def health_check():
 @app.get("/debug-gemini")
 async def debug_gemini():
     import traceback
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    import websockets
     info = {
         "gemini_api_key_len": len(GEMINI_API_KEY),
         "gemini_api_key_prefix": GEMINI_API_KEY[:6] if GEMINI_API_KEY else None,
         "gemini_live_model": GEMINI_LIVE_MODEL,
-        "gemini_live_voice": GEMINI_LIVE_VOICE,
         "google_genai_version": getattr(genai, "__version__", "unknown")
     }
 
-    # Test listing available models
+    # Probe 1: SDK connect with v1beta (default)
     try:
-        models = [m.name for m in client.models.list()]
-        info["models_available"] = [m for m in models if "live" in m or "flash" in m or "exp" in m][:15]
+        client_v1beta = genai.Client(api_key=GEMINI_API_KEY)
+        cfg = types.LiveConnectConfig(response_modalities=["AUDIO"])
+        async with client_v1beta.aio.live.connect(model="gemini-3.8-live", config=cfg) as sess:
+            info["probe_sdk_v1beta"] = "SUCCESS"
     except Exception as e:
-        info["models_list_error"] = str(e)
+        info["probe_sdk_v1beta"] = f"{type(e).__name__}: {str(e)}"
 
-    # Test candidate live models
-    candidates = [
-        GEMINI_LIVE_MODEL,
-        "gemini-2.0-flash-exp",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash-realtime-exp"
-    ]
-    candidates = list(dict.fromkeys(candidates))
+    # Probe 2: SDK connect with v1alpha
+    try:
+        client_v1alpha = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(api_version="v1alpha"))
+        cfg = types.LiveConnectConfig(response_modalities=["AUDIO"])
+        async with client_v1alpha.aio.live.connect(model="gemini-3.8-live", config=cfg) as sess:
+            info["probe_sdk_v1alpha"] = "SUCCESS"
+    except Exception as e:
+        info["probe_sdk_v1alpha"] = f"{type(e).__name__}: {str(e)}"
 
-    test_results = {}
-    for cand in candidates:
-        try:
-            cfg = types.LiveConnectConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=GEMINI_LIVE_VOICE
-                        )
-                    )
-                )
-            )
-            async with client.aio.live.connect(model=cand, config=cfg) as sess:
-                test_results[cand] = "SUCCESS"
-                break
-        except Exception as e:
-            test_results[cand] = f"{type(e).__name__}: {str(e)}"
+    # Probe 3: Raw WebSocket with ?key= on v1beta
+    uri_v1beta = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
+    try:
+        async with websockets.connect(uri_v1beta) as ws:
+            setup = {"setup": {"model": "models/gemini-3.8-live", "generationConfig": {"responseModalities": ["AUDIO"]}}}
+            await ws.send(json.dumps(setup))
+            resp = await asyncio.wait_for(ws.recv(), timeout=4.0)
+            info["probe_raw_ws_v1beta"] = f"SUCCESS: {resp[:80]}"
+    except Exception as e:
+        info["probe_raw_ws_v1beta"] = f"{type(e).__name__}: {str(e)}"
 
-    info["live_model_tests"] = test_results
+    # Probe 4: Raw WebSocket with ?key= on v1alpha
+    uri_v1alpha = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
+    try:
+        async with websockets.connect(uri_v1alpha) as ws:
+            setup = {"setup": {"model": "models/gemini-3.8-live", "generationConfig": {"responseModalities": ["AUDIO"]}}}
+            await ws.send(json.dumps(setup))
+            resp = await asyncio.wait_for(ws.recv(), timeout=4.0)
+            info["probe_raw_ws_v1alpha"] = f"SUCCESS: {resp[:80]}"
+    except Exception as e:
+        info["probe_raw_ws_v1alpha"] = f"{type(e).__name__}: {str(e)}"
+
     return info
 
 # ---------------------------------------------------------------------------
