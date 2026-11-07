@@ -424,12 +424,16 @@ body.call .label-end {
     return u;
   };
 
+  const RAILWAY_HOST = 'ungal-vijay-production.up.railway.app';
+
   const wsUrl = () => {
     const p = new URLSearchParams(location.search).get('ws');
     if (p) return p;
     if (location.protocol === 'file:') return 'ws://localhost:8000/ws/call';
-    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    return proto + location.host + '/ws/call';
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/call';
+    }
+    return 'wss://' + RAILWAY_HOST + '/ws/call';
   };
 
   // Mic Worklet: Downsample native microphone rate -> 16kHz PCM Int16
