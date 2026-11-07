@@ -429,11 +429,12 @@ async def websocket_call_endpoint(client_ws: WebSocket):
         await client_ws.close()
         return
 
-    # Initialize Google GenAI client
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        # Initialize Google GenAI client
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-    # Configure session
-    live_config = types.LiveConnectConfig(
+        # Configure session
+        live_config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
@@ -443,7 +444,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             )
         ),
         system_instruction=types.Content(
-            parts=[types.Part.from_text(SYSTEM_PROMPT)]
+            parts=[types.Part.from_text(text=SYSTEM_PROMPT)]
         ),
         tools=[{
             "function_declarations": [
@@ -453,7 +454,6 @@ async def websocket_call_endpoint(client_ws: WebSocket):
         }]
     )
 
-    try:
         async with gemini_client.aio.live.connect(
             model=GEMINI_LIVE_MODEL,
             config=live_config
@@ -465,7 +465,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                 turns=types.Content(
                     role="user",
                     parts=[types.Part.from_text(
-                        "Start the call now by speaking the official opening greeting exactly as instructed."
+                        text="Start the call now by speaking the official opening greeting exactly as instructed."
                     )]
                 ),
                 turn_complete=True

@@ -506,11 +506,17 @@ body.call .label-end {
         console.error('WebSocket connection error:', err);
       };
       ws.onclose = () => {
-        if (active) endCall();
+        if (active) {
+          if (!subs.textContent) {
+            subs.textContent = 'இணைப்பு முடிவடைந்தது';
+          }
+          setTimeout(() => endCall(), 1500);
+        }
       };
     } catch (err) {
       console.error('Microphone or Audio initialization failed:', err);
-      endCall();
+      subs.textContent = 'மைக்ரோஃபோன் அனுமதி தேவை';
+      setTimeout(() => endCall(), 2000);
     }
 
     try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
@@ -561,6 +567,7 @@ body.call .label-end {
       stopAudio();
     } else if (m.type === 'error') {
       console.error('Server error:', m.message);
+      subs.textContent = m.message || 'சேவையக பிழை';
     }
   }
 
