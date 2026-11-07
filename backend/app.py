@@ -407,6 +407,56 @@ async def health_check():
         "gemini_api_key_configured": bool(GEMINI_API_KEY)
     }
 
+@app.get("/debug-gemini")
+async def debug_gemini():
+    import traceback
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    info = {
+        "gemini_api_key_len": len(GEMINI_API_KEY),
+        "gemini_api_key_prefix": GEMINI_API_KEY[:6] if GEMINI_API_KEY else None,
+        "gemini_live_model": GEMINI_LIVE_MODEL,
+        "gemini_live_voice": GEMINI_LIVE_VOICE,
+        "google_genai_version": getattr(genai, "__version__", "unknown")
+    }
+
+    # Test listing available models
+    try:
+        models = [m.name for m in client.models.list()]
+        info["models_available"] = [m for m in models if "live" in m or "flash" in m or "exp" in m][:15]
+    except Exception as e:
+        info["models_list_error"] = str(e)
+
+    # Test candidate live models
+    candidates = [
+        GEMINI_LIVE_MODEL,
+        "gemini-2.0-flash-exp",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash-realtime-exp"
+    ]
+    candidates = list(dict.fromkeys(candidates))
+
+    test_results = {}
+    for cand in candidates:
+        try:
+            cfg = types.LiveConnectConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=GEMINI_LIVE_VOICE
+                        )
+                    )
+                )
+            )
+            async with client.aio.live.connect(model=cand, config=cfg) as sess:
+                test_results[cand] = "SUCCESS"
+                break
+        except Exception as e:
+            test_results[cand] = f"{type(e).__name__}: {str(e)}"
+
+    info["live_model_tests"] = test_results
+    return info
+
 # ---------------------------------------------------------------------------
 # 6. WebSocket Telephony Bridge (Browser <-> Python <-> Gemini Live)
 # ---------------------------------------------------------------------------
@@ -454,12 +504,34 @@ async def websocket_call_endpoint(client_ws: WebSocket):
         }]
     )
 
-        async with gemini_client.aio.live.connect(
-            model=GEMINI_LIVE_MODEL,
-            config=live_config
-        ) as session:
-            logger.info(f"Connected to Gemini Live session using model '{GEMINI_LIVE_MODEL}' with voice '{GEMINI_LIVE_VOICE}'.")
+        # Robust model resolution: try configured model, then standard live models
+        candidates = [
+            GEMINI_LIVE_MODEL,
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-flash-realtime-exp",
+            "gemini-2.5-flash"
+        ]
+        candidates = list(dict.fromkeys(candidates))
 
+        connected_cm = None
+        session = None
+        active_model = None
+
+        for cand in candidates:
+            try:
+                cm = gemini_client.aio.live.connect(model=cand, config=live_config)
+                session = await cm.__aenter__()
+                connected_cm = cm
+                active_model = cand
+                logger.info(f"Connected to Gemini Live session using model '{cand}' with voice '{GEMINI_LIVE_VOICE}'.")
+                break
+            except Exception as e:
+                logger.warning(f"Model candidate '{cand}' rejected ({e}). Trying next...")
+
+        if not connected_cm or not session:
+            raise RuntimeError(f"Gemini Live rejected connection on all candidate models ({candidates}). Check API key access in Google AI Studio.")
+
+        try:
             # Trigger opening greeting immediately upon connection
             await session.send_client_content(
                 turns=types.Content(
@@ -575,6 +647,9 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                 forward_gemini_to_client(),
                 return_exceptions=True
             )
+        finally:
+            if connected_cm:
+                await connected_cm.__aexit__(None, None, None)
 
     except Exception as e:
         logger.error(f"Telephony bridge failed: {e}")

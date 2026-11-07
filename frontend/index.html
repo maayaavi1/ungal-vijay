@@ -355,6 +355,69 @@ body.call .label-end {
   .title-shimmer, .btn-start::before { animation: none; }
   * { transition: none !important; }
 }
+
+/* Persistent Error Panel */
+.error-panel {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 90%;
+  max-width: 360px;
+  padding: 22px 24px;
+  background: #FFFFFF;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(32, 41, 35, 0.14), 0 1px 3px rgba(32, 41, 35, 0.06);
+  border: 1px solid rgba(200, 61, 54, 0.22);
+  z-index: 50;
+  animation: errorPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes errorPop {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.error-badge {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: rgba(200, 61, 54, 0.08);
+  padding: 4px 10px;
+  border-radius: 20px;
+  margin-bottom: 12px;
+}
+
+.error-detail {
+  font-size: 0.92rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+  margin-bottom: 18px;
+  word-break: break-word;
+}
+
+.error-dismiss-btn {
+  background: #1c251f;
+  color: #FFFFFF;
+  border: none;
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 10px 26px;
+  border-radius: 24px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(32, 41, 35, 0.18);
+  transition: transform 0.18s ease;
+}
+
+.error-dismiss-btn:active {
+  transform: scale(0.96);
+}
+
 </style>
 </head>
 <body class="idle">
@@ -381,6 +444,13 @@ body.call .label-end {
       <div class="subtitle-stream">
         <p class="subtitle-text" id="subs" aria-live="polite"></p>
       </div>
+    </div>
+
+    <!-- State 3: Persistent Error Panel (Until Dismissed) -->
+    <div class="error-panel" id="error-panel" role="alert">
+      <div class="error-badge">இணைப்பு பிழை / Notice</div>
+      <p class="error-detail" id="error-detail"></p>
+      <button type="button" class="error-dismiss-btn" id="error-dismiss-btn">சரி (மூடு)</button>
     </div>
   </main>
 
@@ -411,6 +481,29 @@ body.call .label-end {
 
   let ws, ac, stream, node, an, wake, raf, nextT = 0, active = false;
   const sources = new Set();
+  const errPanel = $('#error-panel');
+  const errDetail = $('#error-detail');
+  const errDismiss = $('#error-dismiss-btn');
+
+  function showError(msg) {
+    if (active) {
+      active = false;
+      stopAudio();
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      try { ws && ws.close(); } catch (e) {}
+      try { ac && ac.close(); } catch (e) {}
+      cancelAnimationFrame(raf);
+      ws = ac = stream = node = an = wake = null;
+      body.className = 'idle';
+    }
+    errDetail.textContent = msg;
+    errPanel.style.display = 'flex';
+  }
+
+  errDismiss.addEventListener('click', () => {
+    errPanel.style.display = 'none';
+    errDetail.textContent = '';
+  });
 
   const b64 = u8 => {
     let s = '';
@@ -463,6 +556,7 @@ body.call .label-end {
 
     body.className = 'call';
     subs.textContent = '';
+    errPanel.style.display = 'none';
     sizeCanvas();
     draw();
 
@@ -504,19 +598,17 @@ body.call .label-end {
       ws.onmessage = onMsg;
       ws.onerror = err => {
         console.error('WebSocket connection error:', err);
+        showError('WebSocket இணைப்பு தோல்வியடைந்தது (Server rejected connection or offline).');
       };
-      ws.onclose = () => {
+      ws.onclose = ev => {
         if (active) {
-          if (!subs.textContent) {
-            subs.textContent = 'இணைப்பு முடிவடைந்தது';
-          }
-          setTimeout(() => endCall(), 1500);
+          const reason = ev.reason ? ` (${ev.reason})` : '';
+          showError(`இணைப்பு முடிவடைந்தது / Disconnected (Code ${ev.code}${reason})`);
         }
       };
     } catch (err) {
       console.error('Microphone or Audio initialization failed:', err);
-      subs.textContent = 'மைக்ரோஃபோன் அனுமதி தேவை';
-      setTimeout(() => endCall(), 2000);
+      showError('மைக்ரோஃபோன் அனுமதி தேவை / Mic permission required: ' + err.message);
     }
 
     try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
@@ -567,7 +659,7 @@ body.call .label-end {
       stopAudio();
     } else if (m.type === 'error') {
       console.error('Server error:', m.message);
-      subs.textContent = m.message || 'சேவையக பிழை';
+      showError(m.message || 'சேவையக பிழை (Server error)');
     }
   }
 
