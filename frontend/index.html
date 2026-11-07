@@ -479,7 +479,7 @@ body.call .label-end {
   const g = cv.getContext('2d');
   const subs = $('#subs');
 
-  let ws, ac, stream, node, an, wake, raf, nextT = 0, active = false;
+  let ws, ac, stream, node, an, wake, raf, nextT = 0, active = false, ready = false, newTurn = true;
   const sources = new Set();
   const errPanel = $('#error-panel');
   const errDetail = $('#error-detail');
@@ -488,10 +488,13 @@ body.call .label-end {
   function showError(msg) {
     if (active) {
       active = false;
+      ready = false;
+      newTurn = true;
       stopAudio();
       if (stream) stream.getTracks().forEach(t => t.stop());
       try { ws && ws.close(); } catch (e) {}
       try { ac && ac.close(); } catch (e) {}
+      try { wake && wake.release(); } catch (e) {}
       cancelAnimationFrame(raf);
       ws = ac = stream = node = an = wake = null;
       body.className = 'idle';
@@ -561,30 +564,34 @@ body.call .label-end {
 
       const src = ac.createMediaStreamSource(stream);
 
-      // Robust 16kHz PCM downsampler (works 100% on mobile and desktop browsers)
-      const bufferSize = 4096;
-      node = ac.createScriptProcessor(bufferSize, 1, 1);
-      const sampleRateRatio = ac.sampleRate / 16000;
-      let pcmAccumulator = [];
+      ready = false;
+      newTurn = true;
 
+      // High-quality 16kHz PCM downsampler with boxcar anti-aliasing filter
+      const ratio = ac.sampleRate / 16000;
+      const CHUNK = 640; // 40ms low-latency speech chunks
+      let out = new Int16Array(CHUNK), n = 0;
+      let sum = 0, cnt = 0, seen = 0, edge = ratio;
+
+      node = ac.createScriptProcessor(2048, 1, 1);
       node.onaudioprocess = e => {
         if (!active) return;
         const input = e.inputBuffer.getChannelData(0);
-        
-        let i = 0;
-        while (i < input.length) {
-          const s = Math.max(-1, Math.min(1, input[Math.floor(i)]));
-          pcmAccumulator.push(s < 0 ? s * 32768 : s * 32767);
-          i += sampleRateRatio;
-        }
-
-        while (pcmAccumulator.length >= 1600) {
-          const chunk = new Int16Array(pcmAccumulator.splice(0, 1600));
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64(new Uint8Array(chunk.buffer)) }));
+        for (let k = 0; k < input.length; k++) {
+          sum += input[k]; cnt++; seen++;
+          if (seen >= edge) {
+            const s = Math.max(-1, Math.min(1, sum / cnt));
+            out[n++] = s < 0 ? s * 32768 : s * 32767;
+            sum = 0; cnt = 0; edge += ratio;
+            if (n === CHUNK) {
+              if (ready && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(out.buffer);
+              }
+              out = new Int16Array(CHUNK);
+              n = 0;
+            }
           }
         }
-
         // Mute output loopback so caller does not hear themselves echo
         const output = e.outputBuffer.getChannelData(0);
         output.fill(0);
@@ -621,6 +628,8 @@ body.call .label-end {
   function endCall() {
     if (!active && body.className === 'idle') return;
     active = false;
+    ready = false;
+    newTurn = true;
 
     try {
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -652,12 +661,21 @@ body.call .label-end {
     let m;
     try { m = JSON.parse(ev.data); } catch (e) { return; }
 
-    if (m.type === 'audio_delta' && m.delta) {
+    if (m.type === 'ready') {
+      ready = true;
+    } else if (m.type === 'audio_delta' && m.delta) {
       playAudio(m.delta);
     } else if (m.type === 'ai_transcript_delta') {
+      if (newTurn) {
+        subs.textContent = '';
+        newTurn = false;
+      }
       subs.textContent += m.delta || '';
+    } else if (m.type === 'turn_complete') {
+      newTurn = true;
     } else if (m.type === 'interrupted') {
       stopAudio();
+      newTurn = true;
     } else if (m.type === 'error') {
       console.error('Server error:', m.message);
       showError(m.message || 'சேவையக பிழை (Server error)');
@@ -679,7 +697,8 @@ body.call .label-end {
     s.connect(ac.destination);
     if (an) s.connect(an); // Equalizer responds to incoming voice too
 
-    nextT = Math.max(nextT, ac.currentTime + 0.04);
+    const lead = nextT > ac.currentTime ? 0 : 0.08;
+    nextT = Math.max(nextT, ac.currentTime + lead + 0.02);
     s.start(nextT);
     nextT += buf.duration;
 

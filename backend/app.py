@@ -198,6 +198,7 @@ db_repo = SchemeRepository(SUPABASE_URL, SUPABASE_KEY)
 # ---------------------------------------------------------------------------
 SEARCH_SCHEMES_DECLARATION = {
     "name": "search_schemes",
+    "behavior": "BLOCKING",
     "description": (
         "Searches Tamil Nadu welfare schemes using caller keywords or the Big 4 triage fields "
         "(age, gender, marital status, income, community). Call this when the caller mentions a specific need, "
@@ -240,6 +241,7 @@ SEARCH_SCHEMES_DECLARATION = {
 
 GET_SCHEME_DETAILS_DECLARATION = {
     "name": "get_scheme_details",
+    "behavior": "BLOCKING",
     "description": (
         "Retrieves full application procedure, required documents, and contact details "
         "for a specific scheme ID or name once the caller chooses to explore it."
@@ -540,6 +542,9 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             raise RuntimeError(f"Gemini Live rejected connection on all candidate models ({candidates}). Check API key access in Google AI Studio.")
 
         try:
+            # Notify client that Gemini Live is ready
+            await client_ws.send_json({"type": "ready"})
+
             # Trigger opening greeting immediately upon connection
             await session.send_client_content(
                 turns=types.Content(
@@ -556,7 +561,12 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                 try:
                     while True:
                         message = await client_ws.receive()
-                        if "bytes" in message and message["bytes"]:
+                        msg_type = message.get("type")
+                        if msg_type == "websocket.disconnect":
+                            logger.info("Browser WebSocket disconnected.")
+                            break
+
+                        if message.get("bytes"):
                             # Raw PCM 16kHz binary chunk from browser
                             pcm_chunk = message["bytes"]
                             await session.send_realtime_input(
@@ -565,7 +575,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                                     mime_type="audio/pcm;rate=16000"
                                 )
                             )
-                        elif "text" in message and message["text"]:
+                        elif message.get("text"):
                             event = json.loads(message["text"])
                             event_type = event.get("type")
 
@@ -574,7 +584,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                                 if raw_base64:
                                     pcm_bytes = base64.b64decode(raw_base64)
                                     await session.send_realtime_input(
-                                        audio=types.Blob(
+                                        media=types.Blob(
                                             data=pcm_bytes,
                                             mime_type="audio/pcm;rate=16000"
                                         )
@@ -587,60 +597,55 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                 except Exception as e:
                     logger.error(f"Error in client-to-gemini stream: {e}")
 
-            # Stream B: Receive Gemini audio/subtitles + execute tools
+            # Stream B: Receive Gemini audio/subtitles + execute tools (persists across turns)
             async def forward_gemini_to_client():
                 try:
-                    async for response in session.receive():
-                        # 1. Handle Tool / Function Calls
-                        if response.tool_call:
-                            function_responses = []
-                            for fc in response.tool_call.function_calls:
-                                logger.info(f"Gemini invoked tool: {fc.name} with args {fc.args}")
-                                
-                                await client_ws.send_json({
-                                    "type": "tool_call_started",
-                                    "tool": fc.name,
-                                    "arguments": fc.args
-                                })
+                    while True:
+                        async for response in session.receive():
+                            # 1. Handle Tool / Function Calls
+                            if response.tool_call:
+                                function_responses = []
+                                for fc in response.tool_call.function_calls:
+                                    args = fc.args or {}
+                                    logger.info(f"Gemini invoked tool: {fc.name} with args {args}")
+                                    try:
+                                        result = await execute_tool(fc.name, args)
+                                    except Exception as e:
+                                        logger.exception(f"Tool {fc.name} execution failed: {e}")
+                                        result = {"error": f"Data lookup error: {str(e)}"}
 
-                                # Execute locally in 0.2ms
-                                result = await execute_tool(fc.name, fc.args)
-
-                                await client_ws.send_json({
-                                    "type": "tool_call_completed",
-                                    "tool": fc.name,
-                                    "result": result
-                                })
-
-                                function_responses.append(
-                                    types.FunctionResponse(
-                                        name=fc.name,
-                                        id=fc.id,
-                                        response={"result": result}
+                                    function_responses.append(
+                                        types.FunctionResponse(
+                                            name=fc.name,
+                                            id=fc.id,
+                                            response={"result": result}
+                                        )
                                     )
-                                )
 
-                            # Return tool output back to Gemini
-                            await session.send_tool_response(function_responses=function_responses)
+                                # Return tool output back to Gemini
+                                await session.send_tool_response(function_responses=function_responses)
 
-                        # 2. Handle Server Audio & Subtitles
-                        if response.server_content:
+                            sc = response.server_content
+                            if not sc:
+                                continue
+
                             # Interruption event: User started talking, Gemini cut audio
-                            if response.server_content.interrupted:
+                            if sc.interrupted:
                                 await client_ws.send_json({"type": "interrupted"})
 
-                            # Extract real-time speech subtitles from output_transcription
-                            if hasattr(response.server_content, "output_transcription") and response.server_content.output_transcription:
-                                text_delta = response.server_content.output_transcription.text
-                                if text_delta:
-                                    await client_ws.send_json({
-                                        "type": "ai_transcript_delta",
-                                        "delta": text_delta
-                                    })
+                            # Log caller speech when transcribed (verifies mic pipeline)
+                            if sc.input_transcription and sc.input_transcription.text:
+                                logger.info(f"Caller said: {sc.input_transcription.text}")
 
-                            model_turn = response.server_content.model_turn
-                            if model_turn:
-                                for part in model_turn.parts:
+                            # Extract real-time speech subtitles from output_transcription
+                            if sc.output_transcription and sc.output_transcription.text:
+                                await client_ws.send_json({
+                                    "type": "ai_transcript_delta",
+                                    "delta": sc.output_transcription.text
+                                })
+
+                            if sc.model_turn:
+                                for part in sc.model_turn.parts:
                                     # Audio chunk (24kHz PCM)
                                     if part.inline_data and part.inline_data.data:
                                         audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
@@ -648,21 +653,20 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                                             "type": "audio_delta",
                                             "delta": audio_b64
                                         })
-                                    elif part.text:
-                                        await client_ws.send_json({
-                                            "type": "ai_transcript_delta",
-                                            "delta": part.text
-                                        })
+
+                            if sc.turn_complete:
+                                await client_ws.send_json({"type": "turn_complete"})
 
                 except Exception as e:
                     logger.error(f"Error in gemini-to-client stream: {e}")
 
-            # Run both streaming tasks concurrently
-            await asyncio.gather(
-                forward_client_to_gemini(),
-                forward_gemini_to_client(),
-                return_exceptions=True
-            )
+            # Run both streaming tasks; clean up immediately when either task finishes
+            t1 = asyncio.create_task(forward_client_to_gemini())
+            t2 = asyncio.create_task(forward_gemini_to_client())
+            done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         finally:
             if connected_cm:
                 await connected_cm.__aexit__(None, None, None)
