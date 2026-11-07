@@ -483,8 +483,11 @@ async def websocket_call_endpoint(client_ws: WebSocket):
         return
 
     try:
-        # Initialize Google GenAI client
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        # Initialize Google GenAI client with v1alpha (verified successful for live audio with AQ Auth keys)
+        gemini_client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options=types.HttpOptions(api_version="v1alpha")
+        )
 
         # Configure session
         live_config = types.LiveConnectConfig(
