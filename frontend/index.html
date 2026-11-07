@@ -529,24 +529,6 @@ body.call .label-end {
     return 'wss://' + RAILWAY_HOST + '/ws/call';
   };
 
-  // Mic Worklet: Downsample native microphone rate -> 16kHz PCM Int16
-  const workletSrc = `class P extends AudioWorkletProcessor {
-    constructor() { super(); this.r = sampleRate / 16000; this.t = 0; this.a = 0; this.o = new Int16Array(1600); this.n = 0; }
-    process(i) {
-      const c = i[0][0]; if (!c) return true;
-      for (let k = 0; k < c.length; k++) {
-        this.a += c[k]; this.t++;
-        if (this.t >= this.r) {
-          let v = Math.max(-1, Math.min(1, this.a / this.t));
-          this.o[this.n++] = v < 0 ? v * 32768 : v * 32767;
-          this.a = 0; this.t -= this.r;
-          if (this.n === 1600) { this.port.postMessage(this.o.slice().buffer); this.n = 0; }
-        }
-      }
-      return true;
-    }
-  } registerProcessor('pcm', P);`;
-
   // --------------------------------------------------------------------------
   // Start Voice Call (Live Gemini Live 3.8 WebSocket)
   // --------------------------------------------------------------------------
@@ -561,38 +543,57 @@ body.call .label-end {
     draw();
 
     try {
-      ac = new (window.AudioContext || window.webkitAudioContext)();
+      ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
       await ac.resume();
 
+      // Native mic capture without forcing hardware sampleRate
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       });
-
-      const blob = new Blob([workletSrc], { type: 'application/javascript' });
-      const url = URL.createObjectURL(blob);
-      await ac.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
 
       an = ac.createAnalyser();
       an.fftSize = 128;
       an.smoothingTimeConstant = 0.82;
 
       const src = ac.createMediaStreamSource(stream);
-      node = new AudioWorkletNode(ac, 'pcm');
-      const mute = ac.createGain(); 
-      mute.gain.value = 0;
 
-      // Citizen mic feeds analyzer (for visual feedback) and worklet (for streaming)
+      // Robust 16kHz PCM downsampler (works 100% on mobile and desktop browsers)
+      const bufferSize = 4096;
+      node = ac.createScriptProcessor(bufferSize, 1, 1);
+      const sampleRateRatio = ac.sampleRate / 16000;
+      let pcmAccumulator = [];
+
+      node.onaudioprocess = e => {
+        if (!active) return;
+        const input = e.inputBuffer.getChannelData(0);
+        
+        let i = 0;
+        while (i < input.length) {
+          const s = Math.max(-1, Math.min(1, input[Math.floor(i)]));
+          pcmAccumulator.push(s < 0 ? s * 32768 : s * 32767);
+          i += sampleRateRatio;
+        }
+
+        while (pcmAccumulator.length >= 1600) {
+          const chunk = new Int16Array(pcmAccumulator.splice(0, 1600));
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64(new Uint8Array(chunk.buffer)) }));
+          }
+        }
+
+        // Mute output loopback so caller does not hear themselves echo
+        const output = e.outputBuffer.getChannelData(0);
+        output.fill(0);
+      };
+
+      // Citizen mic feeds analyzer (drives equalizer live) and processor (streams to Gemini)
       src.connect(an);
       src.connect(node);
-      node.connect(mute);
-      mute.connect(ac.destination);
-
-      node.port.onmessage = e => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'audio_chunk', audio: b64(new Uint8Array(e.data)) }));
-        }
-      };
+      node.connect(ac.destination);
 
       ws = new WebSocket(wsUrl());
       ws.onmessage = onMsg;

@@ -489,26 +489,28 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             http_options=types.HttpOptions(api_version="v1alpha")
         )
 
-        # Configure session
+        # Configure session with audio transcription for real-time subtitles
         live_config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=GEMINI_LIVE_VOICE
+            response_modalities=["AUDIO"],
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=GEMINI_LIVE_VOICE
+                    )
                 )
-            )
-        ),
-        system_instruction=types.Content(
-            parts=[types.Part.from_text(text=SYSTEM_PROMPT)]
-        ),
-        tools=[{
-            "function_declarations": [
-                SEARCH_SCHEMES_DECLARATION,
-                GET_SCHEME_DETAILS_DECLARATION
-            ]
-        }]
-    )
+            ),
+            system_instruction=types.Content(
+                parts=[types.Part.from_text(text=SYSTEM_PROMPT)]
+            ),
+            tools=[{
+                "function_declarations": [
+                    SEARCH_SCHEMES_DECLARATION,
+                    GET_SCHEME_DETAILS_DECLARATION
+                ]
+            }]
+        )
 
         # Robust model resolution: try configured model, then standard live models
         candidates = [
@@ -558,7 +560,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                             # Raw PCM 16kHz binary chunk from browser
                             pcm_chunk = message["bytes"]
                             await session.send_realtime_input(
-                                audio=types.Blob(
+                                media=types.Blob(
                                     data=pcm_chunk,
                                     mime_type="audio/pcm;rate=16000"
                                 )
@@ -627,6 +629,15 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                             if response.server_content.interrupted:
                                 await client_ws.send_json({"type": "interrupted"})
 
+                            # Extract real-time speech subtitles from output_transcription
+                            if hasattr(response.server_content, "output_transcription") and response.server_content.output_transcription:
+                                text_delta = response.server_content.output_transcription.text
+                                if text_delta:
+                                    await client_ws.send_json({
+                                        "type": "ai_transcript_delta",
+                                        "delta": text_delta
+                                    })
+
                             model_turn = response.server_content.model_turn
                             if model_turn:
                                 for part in model_turn.parts:
@@ -637,7 +648,6 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                                             "type": "audio_delta",
                                             "delta": audio_b64
                                         })
-                                    # Text transcription / subtitle
                                     elif part.text:
                                         await client_ws.send_json({
                                             "type": "ai_transcript_delta",
