@@ -558,6 +558,16 @@ body.call .label-end {
         }
       });
 
+      // User clicked 'End Call' while permission popup was open
+      if (!active) {
+        stream.getTracks().forEach(t => t.stop());
+        try { ac && ac.close(); } catch (e) {}
+        ac = stream = null;
+        return;
+      }
+
+      try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
+
       an = ac.createAnalyser();
       an.fftSize = 128;
       an.smoothingTimeConstant = 0.82;
@@ -619,7 +629,6 @@ body.call .label-end {
       showError('மைக்ரோஃபோன் அனுமதி தேவை / Mic permission required: ' + err.message);
     }
 
-    try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
   }
 
   // --------------------------------------------------------------------------
@@ -686,7 +695,7 @@ body.call .label-end {
   // Playback 24kHz PCM Int16 Audio from Gemini
   // --------------------------------------------------------------------------
   function playAudio(b) {
-    if (!ac) return;
+    if (!ac || !active) return;
     const u = unb64(b), n = u.length >> 1;
     if (!n) return;
     const dv = new DataView(u.buffer), buf = ac.createBuffer(1, n, 24000), d = buf.getChannelData(0);
@@ -707,7 +716,7 @@ body.call .label-end {
   }
 
   function stopAudio() {
-    sources.forEach(s => { s.onended = null; try { s.stop(); } catch (e) {} });
+    sources.forEach(s => { s.onended = null; try { s.stop(); } catch (e) {} try { s.disconnect(); } catch (e) {} });
     sources.clear();
     nextT = 0;
   }
@@ -730,6 +739,9 @@ body.call .label-end {
 
   function draw(t = 0) {
     raf = requestAnimationFrame(draw);
+    if (!W || !H || cv.clientWidth !== W) {
+      sizeCanvas();
+    }
     g.clearRect(0, 0, W, H);
 
     // Muted Government Green gradient (#4e9a7b -> #245B46 -> #1a4233)
@@ -782,6 +794,8 @@ body.call .label-end {
   $('#btn-start').addEventListener('click', startCall);
   $('#btn-end').addEventListener('click', endCall);
   window.addEventListener('resize', () => active && sizeCanvas());
+  window.addEventListener('beforeunload', () => { if (active) endCall(); });
+  window.addEventListener('pagehide', () => { if (active) endCall(); });
 })();
 </script>
 </body>

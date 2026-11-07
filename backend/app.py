@@ -107,67 +107,104 @@ class SchemeRepository:
         """Filters schemes in server memory matching the Big 4 triage fields."""
         results = self.cached_schemes
 
-        # 1. Keyword search across names, benefits, and tags
-        if query and query.strip():
-            terms = query.lower().strip().split()
-            filtered = []
+        # 1. Intelligent keyword search with stop-word filtering and relevance scoring
+        if query and isinstance(query, str) and query.strip():
+            raw_terms = query.lower().strip().split()
+            STOP_WORDS = {
+                "scheme", "schemes", "thittam", "thittangal", "for", "the", "a", "an",
+                "in", "of", "and", "to", "arasu", "government", "tamil", "nadu", "service",
+                "pathi", "solla", "sollunga", "irukka", "kedaikkuma", "details", "enna"
+            }
+            meaningful_terms = [t for t in raw_terms if t not in STOP_WORDS and len(t) > 2]
+            search_terms = meaningful_terms if meaningful_terms else raw_terms
+
+            scored = []
             for s in results:
-                searchable_text = " ".join([
-                    s.get("name_en") or "",
-                    s.get("name_ta") or "",
-                    s.get("brief_benefit_en") or "",
-                    s.get("objective_en") or "",
-                    s.get("benefits_en") or "",
-                    " ".join(s.get("special_conditions") or [])
-                ]).lower()
-                if any(t in searchable_text for t in terms):
-                    filtered.append(s)
-            results = filtered
+                score = 0
+                name_text = f"{s.get('name_en') or ''} {s.get('name_ta') or ''}".lower()
+                benefit_text = f"{s.get('brief_benefit_en') or ''} {' '.join(s.get('special_conditions') or [])}".lower()
+                body_text = f"{s.get('objective_en') or ''} {s.get('benefits_en') or ''}".lower()
 
-        # 2. Gender filtering
+                for t in search_terms:
+                    if t in name_text:
+                        score += 5  # Direct match on official scheme name
+                    elif t in benefit_text:
+                        score += 3  # Direct match on 1-line benefit or tag
+                    elif t in body_text:
+                        score += 1  # Match in detailed description
+
+                if score > 0:
+                    scored.append((score, s))
+
+            # Rank the highest-scoring schemes at the top
+            scored.sort(key=lambda x: x[0], reverse=True)
+            results = [s for score, s in scored]
+
+        # Helper for exact category token matching (prevents 'male' in 'female' or 'bc' in 'mbc')
+        def match_tokens(field_val, target_val):
+            if not field_val:
+                return True
+            if isinstance(field_val, list):
+                categories = [str(x).strip().lower() for x in field_val]
+            else:
+                categories = [x.strip().lower() for x in str(field_val).replace('/', ',').split(',')]
+            if 'any' in categories or 'all' in categories:
+                return True
+            return target_val.strip().lower() in categories
+
+        # 2. Gender filtering (exact category match)
         if gender:
-            g_val = gender.lower()
-            results = [
-                s for s in results
-                if not s.get("gender") or "any" in s["gender"] or g_val in s["gender"]
-            ]
+            results = [s for s in results if match_tokens(s.get("gender"), gender)]
 
-        # 3. Age filtering (min_age <= age <= max_age)
+        # 3. Age filtering (min_age <= age <= max_age) with safe type casting
         if age is not None:
-            def check_age(s):
-                min_a = s.get("min_age")
-                max_a = s.get("max_age")
-                if min_a is not None and age < min_a:
-                    return False
-                if max_a is not None and age > max_a:
-                    return False
-                return True
-            results = [s for s in results if check_age(s)]
+            try:
+                age_val = int(age)
+            except (ValueError, TypeError):
+                age_val = None
 
-        # 4. Income filtering (scheme max_income >= caller income)
+            if age_val is not None:
+                def check_age(s):
+                    min_a = s.get("min_age")
+                    max_a = s.get("max_age")
+                    try:
+                        if min_a is not None and age_val < int(min_a):
+                            return False
+                    except (ValueError, TypeError):
+                        pass
+                    try:
+                        if max_a is not None and age_val > int(max_a):
+                            return False
+                    except (ValueError, TypeError):
+                        pass
+                    return True
+                results = [s for s in results if check_age(s)]
+
+        # 4. Income filtering (scheme max_income >= caller income) with safe type casting
         if income is not None:
-            def check_income(s):
-                max_inc = s.get("max_income")
-                if max_inc is not None and income > max_inc:
-                    return False
-                return True
-            results = [s for s in results if check_income(s)]
+            try:
+                income_val = int(income)
+            except (ValueError, TypeError):
+                income_val = None
 
-        # 5. Marital Status filtering
+            if income_val is not None:
+                def check_income(s):
+                    max_inc = s.get("max_income")
+                    try:
+                        if max_inc is not None and income_val > int(max_inc):
+                            return False
+                    except (ValueError, TypeError):
+                        pass
+                    return True
+                results = [s for s in results if check_income(s)]
+
+        # 5. Marital Status filtering (exact category match)
         if marital_status:
-            m_val = marital_status.lower()
-            results = [
-                s for s in results
-                if not s.get("marital_status") or "any" in s["marital_status"] or m_val in s["marital_status"]
-            ]
+            results = [s for s in results if match_tokens(s.get("marital_status"), marital_status)]
 
-        # 6. Community filtering (sc, st, scc, bc, mbc, fc)
+        # 6. Community filtering (exact category match)
         if community:
-            c_val = community.lower()
-            results = [
-                s for s in results
-                if not s.get("community") or "any" in s["community"] or c_val in s["community"]
-            ]
+            results = [s for s in results if match_tokens(s.get("community"), community)]
 
         # 7. Special condition tags
         if special_condition:
@@ -180,11 +217,20 @@ class SchemeRepository:
         return results
 
     def get_scheme_by_id_or_name(self, identifier: str) -> Optional[Dict[str, Any]]:
-        """Returns the full record for a specific scheme by ID or name."""
+        """Returns the full record for a specific scheme by ID or name (exact match first)."""
+        if not identifier:
+            return None
         ident_lower = identifier.lower().strip()
+        # Pass 1: Exact matches
         for s in self.cached_schemes:
             if s.get("id") == identifier:
                 return s
+            if (s.get("name_en") or "").lower().strip() == ident_lower:
+                return s
+            if (s.get("name_ta") or "").lower().strip() == ident_lower:
+                return s
+        # Pass 2: Substring matches
+        for s in self.cached_schemes:
             if ident_lower in (s.get("name_en") or "").lower():
                 return s
             if ident_lower in (s.get("name_ta") or "").lower():
@@ -302,7 +348,7 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
                         "application_procedure": scheme.get("application_procedure_en"),
                         "required_documents_ta": scheme.get("required_documents_ta"),
                         "required_documents_en": scheme.get("required_documents_en"),
-                        "portal_url": scheme.get("portal_url"),
+                        "portal_url": (scheme.get("portal_url") or "").replace("https://", "").replace("http://", "").rstrip("/"),
                         "helpline": scheme.get("helpline"),
                         "officer_contact": scheme.get("officer_contact_ta") or scheme.get("officer_contact_en")
                     }
@@ -320,14 +366,15 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             })
 
         return {
-            "count": total_found,
+            "count": len(summary_list),
+            "total_matches_in_database": total_found,
             "mode": "multiple_matches",
             "matches": summary_list,
-            "instruction": "Present the brief benefits of these options and ask the caller which one to explore."
+            "instruction": "Present the brief benefits of these top matching options and ask the caller which one they want to explore."
         }
 
     elif tool_name == "get_scheme_details":
-        ident = args.get("scheme_identifier", "")
+        ident = str(args.get("scheme_identifier") or args.get("scheme_name") or args.get("name") or args.get("query") or "").strip()
         scheme = db_repo.get_scheme_by_id_or_name(ident)
         if not scheme:
             return {"error": f"Scheme '{ident}' not found in database."}
@@ -340,7 +387,7 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             "application_procedure": scheme.get("application_procedure_en"),
             "required_documents_ta": scheme.get("required_documents_ta"),
             "required_documents_en": scheme.get("required_documents_en"),
-            "portal_url": scheme.get("portal_url"),
+            "portal_url": (scheme.get("portal_url") or "").replace("https://", "").replace("http://", "").rstrip("/"),
             "helpline": scheme.get("helpline"),
             "officer_contact": scheme.get("officer_contact_ta") or scheme.get("officer_contact_en")
         }
@@ -409,58 +456,6 @@ async def health_check():
         "gemini_api_key_configured": bool(GEMINI_API_KEY)
     }
 
-@app.get("/debug-gemini")
-async def debug_gemini():
-    import traceback
-    import websockets
-    info = {
-        "gemini_api_key_len": len(GEMINI_API_KEY),
-        "gemini_api_key_prefix": GEMINI_API_KEY[:6] if GEMINI_API_KEY else None,
-        "gemini_live_model": GEMINI_LIVE_MODEL,
-        "google_genai_version": getattr(genai, "__version__", "unknown")
-    }
-
-    # Probe 1: SDK connect with v1beta (default)
-    try:
-        client_v1beta = genai.Client(api_key=GEMINI_API_KEY)
-        cfg = types.LiveConnectConfig(response_modalities=["AUDIO"])
-        async with client_v1beta.aio.live.connect(model="gemini-3.8-live", config=cfg) as sess:
-            info["probe_sdk_v1beta"] = "SUCCESS"
-    except Exception as e:
-        info["probe_sdk_v1beta"] = f"{type(e).__name__}: {str(e)}"
-
-    # Probe 2: SDK connect with v1alpha
-    try:
-        client_v1alpha = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(api_version="v1alpha"))
-        cfg = types.LiveConnectConfig(response_modalities=["AUDIO"])
-        async with client_v1alpha.aio.live.connect(model="gemini-3.8-live", config=cfg) as sess:
-            info["probe_sdk_v1alpha"] = "SUCCESS"
-    except Exception as e:
-        info["probe_sdk_v1alpha"] = f"{type(e).__name__}: {str(e)}"
-
-    # Probe 3: Raw WebSocket with ?key= on v1beta
-    uri_v1beta = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
-    try:
-        async with websockets.connect(uri_v1beta) as ws:
-            setup = {"setup": {"model": "models/gemini-3.8-live", "generationConfig": {"responseModalities": ["AUDIO"]}}}
-            await ws.send(json.dumps(setup))
-            resp = await asyncio.wait_for(ws.recv(), timeout=4.0)
-            info["probe_raw_ws_v1beta"] = f"SUCCESS: {resp[:80]}"
-    except Exception as e:
-        info["probe_raw_ws_v1beta"] = f"{type(e).__name__}: {str(e)}"
-
-    # Probe 4: Raw WebSocket with ?key= on v1alpha
-    uri_v1alpha = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
-    try:
-        async with websockets.connect(uri_v1alpha) as ws:
-            setup = {"setup": {"model": "models/gemini-3.8-live", "generationConfig": {"responseModalities": ["AUDIO"]}}}
-            await ws.send(json.dumps(setup))
-            resp = await asyncio.wait_for(ws.recv(), timeout=4.0)
-            info["probe_raw_ws_v1alpha"] = f"SUCCESS: {resp[:80]}"
-    except Exception as e:
-        info["probe_raw_ws_v1alpha"] = f"{type(e).__name__}: {str(e)}"
-
-    return info
 
 # ---------------------------------------------------------------------------
 # 6. WebSocket Telephony Bridge (Browser <-> Python <-> Gemini Live)
@@ -542,20 +537,6 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             raise RuntimeError(f"Gemini Live rejected connection on all candidate models ({candidates}). Check API key access in Google AI Studio.")
 
         try:
-            # Notify client that Gemini Live is ready
-            await client_ws.send_json({"type": "ready"})
-
-            # Trigger opening greeting immediately upon connection
-            await session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(
-                        text="Start the call now by speaking the official opening greeting exactly as instructed."
-                    )]
-                ),
-                turn_complete=True
-            )
-
             # Stream A: Forward client microphone audio / commands to Gemini
             async def forward_client_to_gemini():
                 try:
@@ -576,7 +557,10 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                                 )
                             )
                         elif message.get("text"):
-                            event = json.loads(message["text"])
+                            try:
+                                event = json.loads(message["text"])
+                            except Exception:
+                                continue
                             event_type = event.get("type")
 
                             if event_type == "audio_chunk":
@@ -592,7 +576,7 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                             elif event_type == "call.hangup":
                                 logger.info("Caller hung up from browser.")
                                 break
-                except WebSocketDisconnect:
+                except (WebSocketDisconnect, asyncio.CancelledError):
                     logger.info("Browser WebSocket disconnected.")
                 except Exception as e:
                     logger.error(f"Error in client-to-gemini stream: {e}")
@@ -601,7 +585,9 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             async def forward_gemini_to_client():
                 try:
                     while True:
+                        turn_messages = 0
                         async for response in session.receive():
+                            turn_messages += 1
                             # 1. Handle Tool / Function Calls
                             if response.tool_call:
                                 function_responses = []
@@ -657,26 +643,64 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                             if sc.turn_complete:
                                 await client_ws.send_json({"type": "turn_complete"})
 
+                        # If receive() ended without yielding any message, the session was closed
+                        if turn_messages == 0:
+                            logger.info("Gemini receive loop ended without messages.")
+                            break
+
+                except asyncio.CancelledError:
+                    pass
                 except Exception as e:
                     logger.error(f"Error in gemini-to-client stream: {e}")
 
-            # Run both streaming tasks; clean up immediately when either task finishes
+            # Spawn both streaming background tasks (listener active before greeting)
             t1 = asyncio.create_task(forward_client_to_gemini())
             t2 = asyncio.create_task(forward_gemini_to_client())
+
+            # Trigger opening greeting immediately upon connection
+            await session.send_client_content(
+                turns=types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(
+                        text="Start the call now by speaking the official opening greeting exactly as instructed."
+                    )]
+                ),
+                turn_complete=True
+            )
+
+            # Notify browser client that bridge is active and ready for caller speech
+            await client_ws.send_json({"type": "ready"})
+
+            # Wait until either client disconnects or Gemini closes
             done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
             for t in pending:
                 t.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
         finally:
+            if 't1' in locals() and t1 and not t1.done():
+                t1.cancel()
+            if 't2' in locals() and t2 and not t2.done():
+                t2.cancel()
             if connected_cm:
-                await connected_cm.__aexit__(None, None, None)
+                try:
+                    await connected_cm.__aexit__(None, None, None)
+                    logger.info("Gemini Live session closed cleanly.")
+                except Exception as ce:
+                    logger.warning(f"Notice while closing Gemini session: {ce}")
+            try:
+                await gemini_client.aio.aclose()
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"Telephony bridge failed: {e}")
-        await client_ws.send_json({
-            "type": "error",
-            "message": f"Connection to Gemini voice service failed: {str(e)}"
-        })
+        try:
+            await client_ws.send_json({
+                "type": "error",
+                "message": f"Connection to Gemini voice service failed: {str(e)}"
+            })
+        except Exception:
+            pass
     finally:
         try:
             await client_ws.close()
