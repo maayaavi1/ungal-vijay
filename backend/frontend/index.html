@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>உங்கள் விஜய்</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F7F6F1;
+  --text: #202923;
+  --muted: #5e6c62;
+  --green: #245B46;
+  --green-glow: rgba(36, 91, 70, 0.28);
+  --red: #C83D36;
+  --red-glow: rgba(200, 61, 54, 0.28);
+  --font: 'Plus Jakarta Sans', 'Noto Sans Tamil', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding-top: max(32px, env(safe-area-inset-top, 24px));
+  padding-bottom: max(36px, env(safe-area-inset-bottom, 24px));
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+/* 1. Centered Stacked Header: 72px Portrait + Title */
+.header-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  z-index: 10;
+  padding-top: 10px;
+}
+
+.avatar-frame {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 
+    0 1px 3px rgba(32, 41, 35, 0.08),
+    0 10px 24px -6px rgba(32, 41, 35, 0.16);
+  border: 1px solid rgba(32, 41, 35, 0.08);
+  background: #eae8e1;
+}
+
+.avatar-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 18%;
+  display: block;
+}
+
+.title-shimmer {
+  margin-top: 18px;
+  font-size: 1.28rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  background: linear-gradient(
+    110deg,
+    #202923 0%,
+    #202923 35%,
+    #5f776a 48%,
+    #8fb5a2 50%,
+    #5f776a 52%,
+    #202923 65%,
+    #202923 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: goldShimmer 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes goldShimmer {
+  0% { background-position: 120% 0; }
+  60% { background-position: -120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* 2. Middle Area */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 480px;
+  position: relative;
+}
+
+/* State 1: Idle Prompt */
+.idle-prompt {
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+  max-width: 290px;
+  letter-spacing: -0.01em;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+body.call .idle-prompt {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  display: none;
+}
+
+/* State 2: Active Call Stage */
+.call-stage {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 22px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.call .call-stage {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Equalizer Container (25 Capsule Bars) */
+.equalizer-container {
+  width: 70%;
+  max-width: 320px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas#eq {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.subtitle-stream {
+  min-height: 48px;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.subtitle-text {
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+/* 3. Bottom Action Dock: Velvet Core Button (62px) */
+footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  z-index: 10;
+}
+
+.action-stack {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.action-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  background: #1c251f;
+  box-shadow: 
+    0 2px 4px rgba(28, 37, 31, 0.12),
+    0 12px 28px -4px rgba(28, 37, 31, 0.28);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease, opacity 0.3s ease;
+}
+
+.action-btn:hover {
+  transform: scale(1.05);
+}
+
+.action-btn:active {
+  transform: scale(0.96);
+}
+
+.action-btn::before {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.btn-start::before {
+  background: var(--green);
+  box-shadow: 0 0 16px var(--green-glow);
+  animation: coreBreathe 2.6s ease-in-out infinite;
+}
+
+@keyframes coreBreathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+    box-shadow: 0 0 12px var(--green-glow);
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(36, 91, 70, 0.55);
+  }
+}
+
+.btn-end::before {
+  background: var(--red);
+  box-shadow: 0 0 16px var(--red-glow);
+}
+
+.action-btn svg {
+  position: relative;
+  z-index: 2;
+  width: 23px;
+  height: 23px;
+  fill: #FFFFFF;
+}
+
+.btn-start {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+body.call .btn-start {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
+}
+
+.btn-end {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
+}
+
+body.call .btn-end {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.label-stack {
+  position: relative;
+  margin-top: 18px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-label {
+  position: absolute;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.label-start {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.call .label-start {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.label-end {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+body.call .label-end {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-shimmer, .btn-start::before { animation: none; }
+  * { transition: none !important; }
+}
+
+/* Persistent Error Panel */
+.error-panel {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 90%;
+  max-width: 360px;
+  padding: 22px 24px;
+  background: #FFFFFF;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(32, 41, 35, 0.14), 0 1px 3px rgba(32, 41, 35, 0.06);
+  border: 1px solid rgba(200, 61, 54, 0.22);
+  z-index: 50;
+  animation: errorPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes errorPop {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.error-badge {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: rgba(200, 61, 54, 0.08);
+  padding: 4px 10px;
+  border-radius: 20px;
+  margin-bottom: 12px;
+}
+
+.error-detail {
+  font-size: 0.92rem;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+  margin-bottom: 18px;
+  word-break: break-word;
+}
+
+.error-dismiss-btn {
+  background: #1c251f;
+  color: #FFFFFF;
+  border: none;
+  font-family: var(--font);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 10px 26px;
+  border-radius: 24px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(32, 41, 35, 0.18);
+  transition: transform 0.18s ease;
+}
+
+.error-dismiss-btn:active {
+  transform: scale(0.96);
+}
+
+/* 4. Volume Control Dock */
+.volume-dock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(32, 41, 35, 0.05);
+  border: 1px solid rgba(32, 41, 35, 0.08);
+  border-radius: 20px;
+  padding: 6px 14px;
+  margin-top: 2px;
+  box-shadow: 0 1px 3px rgba(32, 41, 35, 0.04);
+}
+
+.volume-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  outline: none;
+  transition: color 0.2s ease, transform 0.15s ease;
+}
+
+.volume-btn:hover {
+  color: var(--text);
+  transform: scale(1.08);
+}
+
+.volume-btn:active {
+  transform: scale(0.92);
+}
+
+.volume-btn svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+}
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(32, 41, 35, 0.18);
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.15s ease;
+}
+
+.volume-slider::-webkit-slider-thumb:active {
+  transform: scale(1.2);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.volume-percent {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 34px;
+  text-align: right;
+  letter-spacing: -0.01em;
+}
+</style>
+</head>
+<body class="idle">
+
+<div class="app-container">
+  <!-- 1. Centered Stacked Header: 72px Portrait + Title -->
+  <header class="header-lockup">
+    <div class="avatar-frame">
+      <img src="img/vijay.jpg" alt="Ungal Vijay" onerror="this.onerror=null; this.src='frontend/img/vijay.jpg';">
+    </div>
+    <h1 class="title-shimmer">உங்கள் விஜய்</h1>
+  </header>
+
+  <!-- 2. Middle Area -->
+  <main>
+    <!-- State 1: Idle -->
+    <p class="idle-prompt">அரசு நலத்திட்டங்கள் பற்றி கேளுங்கள்</p>
+
+    <!-- State 2: Active Call -->
+    <div class="call-stage">
+      <div class="equalizer-container">
+        <canvas id="eq" aria-hidden="true"></canvas>
+      </div>
+      <div class="subtitle-stream">
+        <p class="subtitle-text" id="subs" aria-live="polite"></p>
+      </div>
+      <div class="volume-dock" id="volume-dock" aria-label="ஒலி அளவு கட்டுப்பாடு">
+        <button type="button" class="volume-btn" id="vol-mute-btn" aria-label="ஒலி இயக்கு / முடக்கு">
+          <svg id="vol-icon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
+        <input type="range" class="volume-slider" id="vol-slider" min="0" max="1" step="0.05" value="1" aria-label="ஒலி அளவு">
+        <span class="volume-percent" id="vol-text">100%</span>
+      </div>
+    </div>
+
+    <!-- State 3: Persistent Error Panel -->
+    <div class="error-panel" id="error-panel" role="alert">
+      <div class="error-badge">இணைப்பு பிழை / Notice</div>
+      <p class="error-detail" id="error-detail"></p>
+      <button type="button" class="error-dismiss-btn" id="error-dismiss-btn">சரி (மூடு)</button>
+    </div>
+  </main>
+
+  <!-- 3. Bottom Action Dock: Velvet Core Button -->
+  <footer>
+    <div class="action-stack">
+      <button class="action-btn btn-start" id="btn-start" aria-label="இணைப்பைத் தொடங்கவும்">
+        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+      </button>
+      <button class="action-btn btn-end" id="btn-end" aria-label="இணைப்பைத் துண்டிக்கவும்">
+        <svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+      </button>
+    </div>
+    <div class="label-stack">
+      <span class="status-label label-start">இணைப்பைத் தொடங்கவும்</span>
+      <span class="status-label label-end">இணைப்பைத் துண்டிக்கவும்</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const body = document.body;
+  const cv = $('#eq');
+  const g = cv.getContext('2d');
+  const subs = $('#subs');
+  const errPanel = $('#error-panel');
+  const errDetail = $('#error-detail');
+  const errDismiss = $('#error-dismiss-btn');
+
+  // Volume Controller State
+  let currentVolume = parseFloat(localStorage.getItem('ungal_vijay_vol') || '1.0');
+  let prevVolume = currentVolume > 0 ? currentVolume : 1.0;
+  const volSlider = $('#vol-slider');
+  const volText = $('#vol-text');
+  const volMuteBtn = $('#vol-mute-btn');
+  const volIcon = $('#vol-icon');
+
+  function updateVolumeUI(v) {
+    if (volSlider) volSlider.value = v;
+    if (volText) volText.textContent = Math.round(v * 100) + '%';
+    if (player) player.setVolume(v);
+    if (volIcon) {
+      if (v === 0) {
+        volIcon.innerHTML = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+      } else {
+        volIcon.innerHTML = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+      }
+    }
+    localStorage.setItem('ungal_vijay_vol', v.toString());
+  }
+
+  if (volSlider) {
+    volSlider.value = currentVolume;
+    volText.textContent = Math.round(currentVolume * 100) + '%';
+    volSlider.addEventListener('input', e => {
+      currentVolume = parseFloat(e.target.value);
+      if (currentVolume > 0) prevVolume = currentVolume;
+      updateVolumeUI(currentVolume);
+    });
+  }
+
+  if (volMuteBtn) {
+    volMuteBtn.addEventListener('click', () => {
+      if (currentVolume > 0) {
+        prevVolume = currentVolume;
+        currentVolume = 0;
+      } else {
+        currentVolume = prevVolume || 1.0;
+      }
+      updateVolumeUI(currentVolume);
+    });
+  }
+
+  function showError(msg) {
+    if (active) endCall();
+    errDetail.textContent = msg;
+    errPanel.style.display = 'flex';
+  }
+
+  errDismiss.addEventListener('click', () => {
+    errPanel.style.display = 'none';
+    errDetail.textContent = '';
+  });
+
+  // Base64 Helpers
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  }
+
+  function base64ToFloat32Array(base64) {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const int16Array = new Int16Array(bytes.buffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      float32Array[i] = int16Array[i] / 32768.0;
+    }
+    return float32Array;
+  }
+
+  // --------------------------------------------------------------------------
+  // Audio Player (Google Reference Implementation, 24kHz PCM Worklet)
+  // --------------------------------------------------------------------------
+  class GeminiAudioPlayer {
+    constructor() {
+      this.audioContext = null;
+      this.workletNode = null;
+      this.gainNode = null;
+      this.analyser = null;
+      this.isInitialized = false;
+      this.volume = currentVolume;
+    }
+
+    async init(sharedAnalyser) {
+      if (this.isInitialized) return;
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      // Add playback worklet module (from server or fallback inline)
+      try {
+        await this.audioContext.audioWorklet.addModule('/audio-processors/playback.worklet.js');
+      } catch (err) {
+        console.warn('Could not load playback worklet directly, creating blob URL fallback...', err);
+        const workletCode = `
+          class PCMProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this.audioQueue = [];
+              this.currentOffset = 0;
+              this.port.onmessage = (e) => {
+                if (e.data === "interrupt") {
+                  this.audioQueue = [];
+                  this.currentOffset = 0;
+                } else if (e.data instanceof Float32Array) {
+                  this.audioQueue.push(e.data);
+                }
+              };
+            }
+            process(inputs, outputs) {
+              const output = outputs[0];
+              if (output.length === 0) return true;
+              const ch = output[0];
+              let outIdx = 0;
+              while (outIdx < ch.length && this.audioQueue.length > 0) {
+                const buf = this.audioQueue[0];
+                if (!buf || buf.length === 0) {
+                  this.audioQueue.shift();
+                  this.currentOffset = 0;
+                  continue;
+                }
+                const remOut = ch.length - outIdx;
+                const remBuf = buf.length - this.currentOffset;
+                const cpy = Math.min(remOut, remBuf);
+                for (let i = 0; i < cpy; i++) ch[outIdx++] = buf[this.currentOffset++];
+                if (this.currentOffset >= buf.length) {
+                  this.audioQueue.shift();
+                  this.currentOffset = 0;
+                }
+              }
+              while (outIdx < ch.length) ch[outIdx++] = 0;
+              return true;
+            }
+          }
+          registerProcessor("pcm-processor", PCMProcessor);
+        `;
+        const blob = new Blob([workletCode], { type: 'application/javascript' });
+        await this.audioContext.audioWorklet.addModule(URL.createObjectURL(blob));
+      }
+
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
+      this.gainNode = this.audioContext.createGain();
+      this.gainNode.gain.value = this.volume;
+
+      this.workletNode.connect(this.gainNode);
+      this.gainNode.connect(this.audioContext.destination);
+
+      if (sharedAnalyser) {
+        this.gainNode.connect(sharedAnalyser);
+      }
+
+      this.isInitialized = true;
+    }
+
+    play(base64Audio) {
+      if (!this.isInitialized || !this.workletNode) return;
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+      const float32Data = base64ToFloat32Array(base64Audio);
+      this.workletNode.port.postMessage(float32Data);
+    }
+
+    interrupt() {
+      if (this.workletNode) {
+        this.workletNode.port.postMessage('interrupt');
+      }
+    }
+
+    setVolume(v) {
+      this.volume = Math.max(0, Math.min(1, v));
+      if (this.gainNode && this.audioContext) {
+        try {
+          this.gainNode.gain.setValueAtTime(this.volume, this.audioContext.currentTime);
+        } catch (e) {
+          this.gainNode.gain.value = this.volume;
+        }
+      }
+    }
+
+    destroy() {
+      if (this.workletNode) {
+        try { this.workletNode.disconnect(); } catch (e) {}
+        this.workletNode = null;
+      }
+      if (this.gainNode) {
+        try { this.gainNode.disconnect(); } catch (e) {}
+        this.gainNode = null;
+      }
+      if (this.audioContext) {
+        try { this.audioContext.close(); } catch (e) {}
+        this.audioContext = null;
+      }
+      this.isInitialized = false;
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Audio Capture Streamer (Google Reference Implementation, 16kHz Worklet)
+  // --------------------------------------------------------------------------
+  class GeminiAudioStreamer {
+    constructor(onPcmChunk) {
+      this.onPcmChunk = onPcmChunk;
+      this.audioContext = null;
+      this.workletNode = null;
+      this.mediaStream = null;
+      this.audioSource = null;
+      this.isStreaming = false;
+      this.analyser = null;
+    }
+
+    async start(sharedAnalyser) {
+      if (this.isStreaming) return;
+      this.analyser = sharedAnalyser;
+
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      try {
+        await this.audioContext.audioWorklet.addModule('/audio-processors/capture.worklet.js');
+      } catch (err) {
+        console.warn('Could not load capture worklet directly, creating blob URL fallback...', err);
+        const workletCode = `
+          class AudioCaptureProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this.bufferSize = 512;
+              this.buffer = new Float32Array(this.bufferSize);
+              this.bufferIndex = 0;
+            }
+            process(inputs) {
+              const input = inputs[0];
+              if (input && input.length > 0) {
+                const ch = input[0];
+                for (let i = 0; i < ch.length; i++) {
+                  this.buffer[this.bufferIndex++] = ch[i];
+                  if (this.bufferIndex >= this.bufferSize) {
+                    this.port.postMessage({ type: "audio", data: this.buffer.slice() });
+                    this.bufferIndex = 0;
+                  }
+                }
+              }
+              return true;
+            }
+          }
+          registerProcessor("audio-capture-processor", AudioCaptureProcessor);
+        `;
+        const blob = new Blob([workletCode], { type: 'application/javascript' });
+        await this.audioContext.audioWorklet.addModule(URL.createObjectURL(blob));
+      }
+
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-capture-processor');
+      this.workletNode.port.onmessage = (event) => {
+        if (!this.isStreaming) return;
+        if (event.data?.type === 'audio') {
+          const float32Array = event.data.data;
+          const int16Array = new Int16Array(float32Array.length);
+          for (let i = 0; i < float32Array.length; i++) {
+            const s = Math.max(-1, Math.min(1, float32Array[i]));
+            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          const base64Pcm = arrayBufferToBase64(int16Array.buffer);
+          this.onPcmChunk(base64Pcm);
+        }
+      };
+
+      this.audioSource = this.audioContext.createMediaStreamSource(this.mediaStream);
+      this.audioSource.connect(this.workletNode);
+
+      // Connect mic to shared AnalyserNode for capsule equalizer response
+      if (this.analyser) {
+        const micBoostGain = this.audioContext.createGain();
+        micBoostGain.gain.value = 2.2;
+        this.audioSource.connect(micBoostGain);
+        micBoostGain.connect(this.analyser);
+      }
+
+      this.isStreaming = true;
+    }
+
+    stop() {
+      this.isStreaming = false;
+      if (this.audioSource) {
+        try { this.audioSource.disconnect(); } catch (e) {}
+        this.audioSource = null;
+      }
+      if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach(t => {
+          try { t.stop(); } catch (e) {}
+          t.enabled = false;
+        });
+        this.mediaStream = null;
+      }
+      if (this.audioContext) {
+        try { this.audioContext.close(); } catch (e) {}
+        this.audioContext = null;
+      }
+      this.workletNode = null;
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Visualizer / Capsule Equalizer (100% Flat on Silence, Sound-Reactive on Voice)
+  // --------------------------------------------------------------------------
+  const BAR_COUNT = 25;
+  const smoothed = new Float32Array(BAR_COUNT);
+  let W = 0, H = 0, raf = null, visualizerAnalyser = null;
+
+  function sizeCanvas() {
+    const r = window.devicePixelRatio || 1;
+    W = cv.clientWidth;
+    H = cv.clientHeight;
+    cv.width = W * r;
+    cv.height = H * r;
+    g.setTransform(r, 0, 0, r, 0, 0);
+  }
+
+  function drawEqualizer() {
+    raf = requestAnimationFrame(drawEqualizer);
+    if (!W || !H || cv.clientWidth !== W) {
+      sizeCanvas();
+    }
+    g.clearRect(0, 0, W, H);
+
+    // Muted Government Green gradient (#4e9a7b -> #245B46 -> #1a4233)
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#4e9a7b');
+    grad.addColorStop(0.5, '#245B46');
+    grad.addColorStop(1, '#1a4233');
+    g.fillStyle = grad;
+
+    const gap = W / BAR_COUNT;
+    const barWidth = Math.max(3.5, gap * 0.44);
+    const mid = (BAR_COUNT - 1) / 2;
+
+    let data = null;
+    if (visualizerAnalyser) {
+      data = new Uint8Array(visualizerAnalyser.frequencyBinCount);
+      visualizerAnalyser.getByteFrequencyData(data);
+    }
+
+    const restHeight = 4; // Flat resting height when silent (strictly no sine wave)
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const distFromCenter = Math.abs(i - mid) / mid;
+      let energy = 0;
+
+      if (data && data.length > 0) {
+        // Human vocal formants concentrate between 150Hz and 3400Hz
+        const vocalBin = Math.min(data.length - 1, 1 + Math.floor((1 - Math.pow(distFromCenter, 1.4)) * 14));
+        const rawVal = data[vocalBin] / 255.0;
+
+        // Clean noise floor: room silence below 0.05 ignored completely
+        if (rawVal > 0.05) {
+          energy = Math.min(1.0, ((rawVal - 0.05) / 0.95) * 2.4);
+        }
+      }
+
+      // Flat still capsule bars on silence; dynamic energetic pulse when voice is present
+      const targetHeight = restHeight + Math.pow(energy, 1.1) * (H - restHeight) * 0.95 * (1 - distFromCenter * 0.2);
+      const smoothFactor = energy > 0 ? 0.38 : 0.20;
+      smoothed[i] += (targetHeight - smoothed[i]) * smoothFactor;
+
+      const barHeight = Math.max(restHeight, Math.min(H, smoothed[i]));
+      const x = i * gap + (gap - barWidth) / 2;
+      const y = (H - barHeight) / 2;
+      const radius = barWidth / 2;
+
+      g.beginPath();
+      if (g.roundRect) {
+        g.roundRect(x, y, barWidth, barHeight, radius);
+      } else {
+        g.rect(x, y, barWidth, barHeight);
+      }
+      g.fill();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Core State & Direct WebSocket Connection to Gemini Live API
+  // --------------------------------------------------------------------------
+  let active = false;
+  let ws = null;
+  let streamer = null;
+  let player = null;
+  let wakeLock = null;
+
+  async function startCall() {
+    if (active) return;
+    active = true;
+
+    body.className = 'call';
+    subs.textContent = 'இணைக்கிறது... (Connecting...)';
+    errPanel.style.display = 'none';
+
+    sizeCanvas();
+    drawEqualizer();
+
+    try {
+      wakeLock = await navigator.wakeLock?.request('screen').catch(() => null);
+    } catch (e) {}
+
+    try {
+      // Step 1: Fetch runtime configuration and ephemeral token from backend
+      const [tokenRes, configRes] = await Promise.all([
+        fetch('/api/token', { method: 'POST' }),
+        fetch('/api/config')
+      ]);
+
+      if (!tokenRes.ok) {
+        const errText = await tokenRes.text();
+        throw new Error('Token generation failed: ' + errText);
+      }
+      if (!configRes.ok) {
+        throw new Error('Failed to load server configuration');
+      }
+
+      const { token } = await tokenRes.json();
+      const config = await configRes.json();
+
+      if (!active) return; // User hung up during fetch
+
+      // Step 2: Initialize Shared Audio Visualizer Analyser
+      const visContext = new (window.AudioContext || window.webkitAudioContext)();
+      visualizerAnalyser = visContext.createAnalyser();
+      visualizerAnalyser.fftSize = 256;
+      visualizerAnalyser.smoothingTimeConstant = 0.78;
+
+      // Step 3: Initialize Google Reference Audio Player (24kHz)
+      player = new GeminiAudioPlayer();
+      await player.init(visualizerAnalyser);
+
+      // Step 4: Establish direct WebSocket to Gemini Live API
+      const directWsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
+      console.log('Connecting directly to Gemini Live WebSocket...');
+
+      ws = new WebSocket(directWsUrl);
+
+      ws.onopen = () => {
+        console.log('Gemini Live WebSocket opened. Sending setup payload...');
+
+        const setupMessage = {
+          setup: {
+            model: "models/" + (config.model || "gemini-2.0-flash-exp"),
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: config.voice || "Kore"
+                  }
+                }
+              }
+            },
+            systemInstruction: {
+              parts: [{ text: config.system_instruction }]
+            },
+            tools: [{ functionDeclarations: config.tools }],
+            outputAudioTranscription: {},
+            realtimeInputConfig: {
+              automaticActivityDetection: {
+                disabled: false
+              }
+            }
+          }
+        };
+
+        ws.send(JSON.stringify(setupMessage));
+      };
+
+      ws.onmessage = async (event) => {
+        let textData = event.data;
+        if (textData instanceof Blob) {
+          textData = await textData.text();
+        } else if (textData instanceof ArrayBuffer) {
+          textData = new TextDecoder().decode(textData);
+        }
+
+        try {
+          const msg = JSON.parse(textData);
+          handleGeminiMessage(msg, config);
+        } catch (e) {
+          console.error('Error parsing Gemini message:', e, textData);
+        }
+      };
+
+      ws.onerror = (e) => {
+        console.error('Gemini WebSocket error:', e);
+        showError('Gemini இணைப்பு பிழை (WebSocket connection error)');
+      };
+
+      ws.onclose = (e) => {
+        console.log('Gemini WebSocket closed:', e);
+        if (active) {
+          endCall();
+        }
+      };
+
+      // Step 5: Start microphone streaming via AudioCaptureProcessor worklet
+      streamer = new GeminiAudioStreamer((base64Pcm) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            realtimeInput: {
+              mediaChunks: [
+                {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: base64Pcm
+                }
+              ]
+            }
+          }));
+        }
+      });
+
+      await streamer.start(visualizerAnalyser);
+
+    } catch (err) {
+      console.error('Failed to start call:', err);
+      showError(err.message || 'அழைப்பைத் தொடங்குவதில் பிழை ஏற்பட்டது.');
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Handle Incoming Messages from Gemini Live API
+  // --------------------------------------------------------------------------
+  async function handleGeminiMessage(msg, config) {
+    // 1. Setup Complete -> Prompt opening greeting
+    if (msg.setupComplete) {
+      console.log('Gemini Live setup complete. Prompting opening greeting...');
+      subs.textContent = '';
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          clientContent: {
+            turns: [
+              {
+                role: "user",
+                parts: [{ text: "Call connected. Greet the citizen now with the official opening greeting in spoken Tanglish." }]
+              }
+            ],
+            turnComplete: true
+          }
+        }));
+      }
+      return;
+    }
+
+    // 2. Tool Calling (Function Calls: search_schemes, get_scheme_details)
+    if (msg.toolCall) {
+      const calls = msg.toolCall.functionCalls || [];
+      console.log('Gemini requested tool calls:', calls);
+
+      const responses = await Promise.all(calls.map(async (call) => {
+        const { id, name, args } = call;
+        let endpoint = name === 'get_scheme_details' ? '/api/get_scheme_details' : '/api/search_schemes';
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(args || {})
+          });
+          const result = await res.json();
+          return { id, name, response: { result: result } };
+        } catch (e) {
+          console.error(`Error executing tool ${name}:`, e);
+          return { id, name, response: { error: e.message } };
+        }
+      }));
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('Sending tool response back to Gemini:', responses);
+        ws.send(JSON.stringify({
+          toolResponse: {
+            functionResponses: responses
+          }
+        }));
+      }
+      return;
+    }
+
+    const serverContent = msg.serverContent;
+    if (!serverContent) return;
+
+    // 3. Barge-in / Interrupted
+    if (serverContent.interrupted) {
+      console.log('Model interrupted by user voice');
+      if (player) player.interrupt();
+      subs.textContent = '';
+    }
+
+    // 4. Real-time Subtitles (output transcription text)
+    if (serverContent.outputTranscription?.text) {
+      subs.textContent += serverContent.outputTranscription.text;
+    }
+
+    // 5. Audio and Text Model Turns
+    const parts = serverContent.modelTurn?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        if (player) player.play(part.inlineData.data);
+      }
+      if (part.text && !serverContent.outputTranscription) {
+        subs.textContent += part.text;
+      }
+    }
+
+    // 6. Turn Complete
+    if (serverContent.turnComplete) {
+      console.log('Turn complete');
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // End Call & Complete Hardware/Network Teardown
+  // --------------------------------------------------------------------------
+  function endCall() {
+    active = false;
+    body.className = 'idle';
+
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = null;
+    }
+
+    // Clear and flatten equalizer canvas
+    if (g && W && H) {
+      g.clearRect(0, 0, W, H);
+      smoothed.fill(4);
+    }
+
+    subs.textContent = '';
+
+    // Stop microphone stream and close mic hardware
+    if (streamer) {
+      streamer.stop();
+      streamer = null;
+    }
+
+    // Interrupt and destroy audio player
+    if (player) {
+      player.interrupt();
+      player.destroy();
+      player = null;
+    }
+
+    // Close direct Gemini WebSocket
+    if (ws) {
+      try {
+        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+        ws.close();
+      } catch (e) {}
+      ws = null;
+    }
+
+    if (wakeLock) {
+      try { wakeLock.release(); } catch (e) {}
+      wakeLock = null;
+    }
+  }
+
+  $('#btn-start').addEventListener('click', startCall);
+  $('#btn-end').addEventListener('click', endCall);
+
+  window.addEventListener('resize', () => active && sizeCanvas());
+  window.addEventListener('beforeunload', () => active && endCall());
+  window.addEventListener('pagehide', () => active && endCall());
+  window.addEventListener('unload', () => active && endCall());
+})();
+</script>
+</body>
+</html>

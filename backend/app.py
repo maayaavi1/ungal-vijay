@@ -1,14 +1,13 @@
 import os
 import json
-import base64
-import asyncio
 import logging
+import datetime
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
@@ -26,16 +25,16 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
-logger = logging.getLogger("ungal_vijay_gemini")
+logger = logging.getLogger("ungal_vijay_v2")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 if SUPABASE_URL.endswith("/rest/v1"):
     SUPABASE_URL = SUPABASE_URL[:-8].rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
-GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live")
-GEMINI_LIVE_VOICE = os.getenv("GEMINI_LIVE_VOICE", "Kore")
 
+GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.0-flash-exp").strip()
+GEMINI_LIVE_VOICE = os.getenv("GEMINI_LIVE_VOICE", "Kore").strip()
 PORT = int(os.getenv("PORT", "8000"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
@@ -51,48 +50,188 @@ for p in prompt_candidates:
         try:
             with open(p, "r", encoding="utf-8") as f:
                 SYSTEM_PROMPT = f.read()
-            logger.info(f"Loaded system prompt successfully from: {p}")
+            logger.info(f"Loaded system prompt from: {p}")
             break
         except Exception as e:
-            logger.warning(f"Could not load prompt from {p}: {e}")
+            logger.warning(f"Could not load system prompt from {p}: {e}")
 
 if not SYSTEM_PROMPT:
-    logger.warning("system_prompt.txt not found. Using default prompt.")
-    SYSTEM_PROMPT = "You are the Tamil Nadu Government Welfare Schemes Voice AI helpline counselor. Speak natural spoken Tanglish."
+    SYSTEM_PROMPT = "You are the Tamil Nadu Government Welfare Schemes Voice AI helpline counselor. Speak in respectful spoken Tanglish."
+
+OPENING_GREETING = (
+    "Vanakkam! Tamil Nadu Arasu Nala Thittangal sevai-kku ungalai anbodu varaverkirom. "
+    "Ungalukku edhaavadhu kurippitta thittam pathi therinjukanuma, illa ungalukku enna thittangal porundhum nu paarkalaama?"
+)
+
+# Initialize Google GenAI client safely
+ai_client: Optional[genai.Client] = None
+if GEMINI_API_KEY:
+    try:
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info("Google GenAI client initialized with API key.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Google GenAI client: {e}")
+else:
+    logger.warning("GEMINI_API_KEY is not set in environment. It will be required when generating tokens.")
 
 # ---------------------------------------------------------------------------
-# 2. Database Repository (Supabase with In-Memory Startup Cache)
+# 2. Welfare Scheme Fallback Data (Guarantees zero-failure cold boot)
+# ---------------------------------------------------------------------------
+FALLBACK_SCHEMES: List[Dict[str, Any]] = [
+    {
+        "id": "kmut-001",
+        "name_en": "Kalaignar Magalir Urimai Thogai Thittam (KMUT)",
+        "name_ta": "கலைஞர் மகளிர் உரிமைத் திட்டம்",
+        "brief_benefit_en": "₹1,000 monthly financial assistance directly to women heads of family",
+        "benefits_en": "₹1,000 per month deposited directly into beneficiary bank account via DBT.",
+        "gender": ["female"],
+        "min_age": 21,
+        "max_age": 100,
+        "marital_status": ["married", "widow", "deserted", "single"],
+        "max_income": 250000,
+        "community": ["all"],
+        "application_procedure_en": "Apply through special camps held at local ration shops / e-Sevai centers with Ration card, Aadhaar card, and Bank passbook.",
+        "required_documents_ta": "குடும்ப அட்டை (Ration Card), ஆதார் அட்டை, வங்கி கணக்கு புத்தகம், மின் கட்டண ரசீது",
+        "required_documents_en": "Ration Card (Smart Card), Aadhaar Card, Bank Passbook linked to Aadhaar, Electricity Consumer Bill",
+        "portal_url": "kmut.tn.gov.in",
+        "helpline": "044-25619200",
+        "officer_contact_ta": "மண்டல வருவாய் அலுவலர் / வட்டாட்சியர் (Tahsildar)",
+        "special_conditions": ["women_head_of_family"]
+    },
+    {
+        "id": "pudhumai-penn-002",
+        "name_en": "Moovalur Ramamirtham Ammaiyar Higher Education Assurance Scheme (Pudhumai Penn)",
+        "name_ta": "புதுமைப் பெண் திட்டம்",
+        "brief_benefit_en": "₹1,000 monthly allowance for girl students pursuing higher education who studied in government schools",
+        "benefits_en": "₹1,000 per month paid until completion of degree/diploma.",
+        "gender": ["female"],
+        "min_age": 17,
+        "max_age": 25,
+        "marital_status": ["single", "married"],
+        "max_income": None,
+        "community": ["all"],
+        "application_procedure_en": "Apply online through your college nodal officer at penkalvi.tn.gov.in with Bonafide certificate and 6th-12th Govt school transfer certificate.",
+        "required_documents_ta": "6 முதல் 12 ஆம் வகுப்பு வரை அரசுப் பள்ளியில் படித்ததற்கான சான்றிதழ், கல்லூரி சேர்க்கை அட்டை, ஆதார், வங்கி கணக்கு",
+        "required_documents_en": "Govt school study proof (Class 6-12), College ID / Bonafide, Aadhaar Card, Bank Passbook",
+        "portal_url": "penkalvi.tn.gov.in",
+        "helpline": "181 / 044-25619200",
+        "officer_contact_ta": "கல்லூரி திட்ட ஒருங்கிணைப்பாளர் / மாவட்ட சமூக நல அலுவலர்",
+        "special_conditions": ["govt_school_studied", "higher_education"]
+    },
+    {
+        "id": "tamil-pudhalvan-003",
+        "name_en": "Tamil Pudhalvan Higher Education Scheme",
+        "name_ta": "தமிழ்ப் புதல்வன் திட்டம்",
+        "brief_benefit_en": "₹1,000 monthly allowance for boy students pursuing higher education who studied in government schools",
+        "benefits_en": "₹1,000 per month disbursed to boys studying in college.",
+        "gender": ["male"],
+        "min_age": 17,
+        "max_age": 25,
+        "marital_status": ["single"],
+        "max_income": None,
+        "community": ["all"],
+        "application_procedure_en": "Apply online via college nodal officer at tamilpudhalvan.tn.gov.in portal.",
+        "required_documents_ta": "6-12 அரசு பள்ளி கல்வி சான்று, கல்லூரி அடையாள அட்டை, ஆதார், வங்கி கணக்கு புத்தகம்",
+        "required_documents_en": "Govt school certificate (Class 6-12), College Bonafide/ID, Aadhaar Card, Bank Account",
+        "portal_url": "tamilpudhalvan.tn.gov.in",
+        "helpline": "181",
+        "officer_contact_ta": "கல்லூரி முதல்வர் / மாவட்ட சமூக நல அலுவலர்",
+        "special_conditions": ["govt_school_studied", "higher_education"]
+    },
+    {
+        "id": "marriage-mra-004",
+        "name_en": "Moovalur Ramamirtham Ammaiyar Memorial Marriage Assistance Scheme",
+        "name_ta": "மூவலூர் ராமாமிர்தம் அம்மையார் நினைவு திருமண உதவி திட்டம்",
+        "brief_benefit_en": "₹25,000 to ₹50,000 financial assistance plus 8 grams (1 sovereign) 22k gold coin for bride's marriage",
+        "benefits_en": "Scheme 1: ₹25,000 cheque + 8g gold coin for 10th pass. Scheme 2: ₹50,000 cheque + 8g gold coin for degree/diploma holders.",
+        "gender": ["female"],
+        "min_age": 18,
+        "max_age": 35,
+        "marital_status": ["single"],
+        "max_income": 72000,
+        "community": ["all"],
+        "application_procedure_en": "Apply through e-Sevai center at least 40 days before marriage date.",
+        "required_documents_ta": "மணமகள் கல்வி சான்றிதழ், வருமான சான்று (₹72,000க்குள்), திருமண அழைப்பிதழ், மணமகன் & மணமகள் வயது சான்று",
+        "required_documents_en": "Bride education mark sheet, Income certificate, Marriage invitation, Age proof of bride (18+) and groom (21+)",
+        "portal_url": "tnesevai.tn.gov.in",
+        "helpline": "181",
+        "officer_contact_ta": "வட்டார வளர்ச்சி அலுவலர் (BDO) / மாவட்ட சமூக நல அலுவலர்",
+        "special_conditions": ["marriage_assistance"]
+    },
+    {
+        "id": "sewing-machine-005",
+        "name_en": "Sathiyavani Muthu Ammaiyar Free Supply of Sewing Machine Scheme",
+        "name_ta": "சத்தியவாணி முத்து அம்மையார் நினைவு இலவச தையல் இயந்திரம் வழங்கும் திட்டம்",
+        "brief_benefit_en": "Free motorized/manual sewing machine for destitute widows, deserted wives, and poor women",
+        "benefits_en": "Free sewing machine provided for self-employment livelihood.",
+        "gender": ["female"],
+        "min_age": 20,
+        "max_age": 40,
+        "marital_status": ["widow", "deserted", "destitute", "married"],
+        "max_income": 72000,
+        "community": ["all"],
+        "application_procedure_en": "Submit application to District Social Welfare Office or nearest e-Sevai center with tailoring training certificate.",
+        "required_documents_ta": "தையல் பயிற்சி சான்றிதழ் (குறைந்தது 6 மாதங்கள்), வருமான சான்றிதழ், ஆதரவற்ற விதவை / கணவனால் கைவிடப்பட்டோர் சான்றிதழ்",
+        "required_documents_en": "Tailoring training certificate (minimum 6 months), Income certificate (below ₹72,000), Widow / Deserted certificate if applicable",
+        "portal_url": "tnesevai.tn.gov.in",
+        "helpline": "181",
+        "officer_contact_ta": "மாவட்ட சமூக நல அலுவலர் (DSWO) / தாலுகா சமூக நல விரிவாக்க அலுவலர்",
+        "special_conditions": ["tailoring_trained"]
+    },
+    {
+        "id": "goat-sheep-006",
+        "name_en": "Free Distribution of Goats / Sheep Scheme",
+        "name_ta": "இலவச வெள்ளாடுகள் / செம்மறியாடுகள் வழங்கும் திட்டம்",
+        "brief_benefit_en": "4 free goats/sheep per poorest rural landless family with 100% subsidy and free fodder seeds",
+        "benefits_en": "4 goats or sheep (1 male + 3 female) given free of cost for sustainable rural livelihood.",
+        "gender": ["female", "male"],
+        "min_age": 18,
+        "max_age": 60,
+        "marital_status": ["all"],
+        "max_income": 72000,
+        "community": ["all", "sc", "st", "bc", "mbc"],
+        "application_procedure_en": "Beneficiaries selected by Grama Sabha convened by Village Panchayat.",
+        "required_documents_ta": "குடும்ப அட்டை, ஆதார் அட்டை, நிலமற்ற விவசாய கூலி சான்றிதழ், கிராம சபை ஒப்புதல்",
+        "required_documents_en": "Ration Card, Aadhaar Card, Landless agricultural labourer proof from VAO",
+        "portal_url": "ahvs.tn.gov.in",
+        "helpline": "1962",
+        "officer_contact_ta": "மண்டல கால்நடை உதவி இயக்குனர் / கால்நடை மருந்தக உதவி மருத்துவர்",
+        "special_conditions": ["landless_agricultural_labourer", "rural"]
+    }
+]
+
+# ---------------------------------------------------------------------------
+# 3. Database Repository (Supabase with In-Memory Cache)
 # ---------------------------------------------------------------------------
 class SchemeRepository:
-    """
-    Preloads all 25 schemes into server memory on boot to guarantee
-    sub-millisecond lookups and zero network lag during phone calls.
-    """
     def __init__(self, url: str, key: str):
         self.client: Optional[Client] = None
         if url and key:
             try:
                 self.client = create_client(url, key)
-                logger.info("Supabase client initialized.")
+                logger.info("Supabase client created successfully.")
             except Exception as e:
                 logger.error(f"Failed to initialize Supabase client: {e}")
         else:
-            logger.warning("Supabase credentials missing. Running in offline mock mode.")
+            logger.warning("Supabase credentials missing. Using embedded fallback schemes.")
 
-        self.cached_schemes: List[Dict[str, Any]] = []
+        self.cached_schemes: List[Dict[str, Any]] = list(FALLBACK_SCHEMES)
 
     async def warm_up_cache(self):
-        """Loads all schemes from Supabase into server memory at boot time."""
+        """Preloads all 25 schemes from Supabase into memory."""
         if not self.client:
             return
         try:
             response = await asyncio.to_thread(
                 lambda: self.client.table("schemes").select("*").execute()
             )
-            self.cached_schemes = response.data or []
-            logger.info(f"Database cache initialized: {len(self.cached_schemes)} schemes loaded into memory.")
+            if response.data and len(response.data) > 0:
+                self.cached_schemes = response.data
+                logger.info(f"Supabase cache initialized: {len(self.cached_schemes)} schemes loaded.")
+            else:
+                logger.info("Supabase query returned empty. Keeping fallback schemes.")
         except Exception as e:
-            logger.error(f"Error fetching schemes from Supabase during warmup: {e}")
+            logger.error(f"Error fetching schemes from Supabase during warmup: {e}. Keeping fallback schemes.")
 
     def search_schemes(
         self,
@@ -104,10 +243,9 @@ class SchemeRepository:
         community: Optional[str] = None,
         special_condition: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Filters schemes in server memory matching the Big 4 triage fields."""
         results = self.cached_schemes
 
-        # 1. Intelligent keyword search with stop-word filtering and relevance scoring
+        # 1. Keyword search with stop-word filtering
         if query and isinstance(query, str) and query.strip():
             raw_terms = query.lower().strip().split()
             STOP_WORDS = {
@@ -118,9 +256,6 @@ class SchemeRepository:
             }
             meaningful_terms = [t for t in raw_terms if t not in STOP_WORDS and len(t) > 2]
 
-            # Only perform keyword scoring if caller used specific meaningful terms.
-            # If query had ONLY generic stop words (e.g. 'government scheme', 'arasu thittam'),
-            # do NOT fall back to stop words to prevent false-positive scoring across all 25 schemes.
             if meaningful_terms:
                 scored = []
                 for s in results:
@@ -131,20 +266,19 @@ class SchemeRepository:
 
                     for t in meaningful_terms:
                         if t in name_text:
-                            score += 5  # Direct match on official scheme name
+                            score += 5
                         elif t in benefit_text:
-                            score += 3  # Direct match on 1-line benefit or tag
+                            score += 3
                         elif t in body_text:
-                            score += 1  # Match in detailed description
+                            score += 1
 
                     if score > 0:
                         scored.append((score, s))
 
-                # Rank the highest-scoring schemes at the top
                 scored.sort(key=lambda x: x[0], reverse=True)
                 results = [s for score, s in scored]
 
-        # Helper for exact category token matching (prevents 'male' in 'female' or 'bc' in 'mbc')
+        # Exact category token matching helper (prevents 'male' in 'female' or 'bc' in 'mbc')
         def match_tokens(field_val, target_val):
             if not field_val or not target_val:
                 return True
@@ -158,14 +292,13 @@ class SchemeRepository:
                 targets = set(str(x).strip().lower() for x in target_val if str(x).strip())
             else:
                 targets = set(x.strip().lower() for x in str(target_val).replace('/', ',').split(',') if x.strip())
-            # Exact token intersection prevents substring collisions ('male' != 'female', 'bc' != 'mbc')
             return bool(targets & categories)
 
-        # 2. Gender filtering (exact category match)
+        # 2. Gender filtering
         if gender:
             results = [s for s in results if match_tokens(s.get("gender"), gender)]
 
-        # 3. Age filtering (min_age <= age <= max_age) with safe type casting
+        # 3. Age filtering
         if age is not None:
             try:
                 age_val = int(age)
@@ -189,7 +322,7 @@ class SchemeRepository:
                     return True
                 results = [s for s in results if check_age(s)]
 
-        # 4. Income filtering (scheme max_income >= caller income) with safe type casting
+        # 4. Income filtering
         if income is not None:
             try:
                 income_val = int(income)
@@ -207,17 +340,17 @@ class SchemeRepository:
                     return True
                 results = [s for s in results if check_income(s)]
 
-        # 5. Marital Status filtering (exact category match)
+        # 5. Marital Status filtering
         if marital_status:
             results = [s for s in results if match_tokens(s.get("marital_status"), marital_status)]
 
-        # 6. Community filtering (exact category match)
+        # 6. Community filtering
         if community:
             results = [s for s in results if match_tokens(s.get("community"), community)]
 
-        # 7. Special condition tags
+        # 7. Special condition filtering
         if special_condition:
-            cond_val = special_condition.lower()
+            cond_val = str(special_condition).lower()
             results = [
                 s for s in results
                 if s.get("special_conditions") and cond_val in [c.lower() for c in s["special_conditions"]]
@@ -226,7 +359,6 @@ class SchemeRepository:
         return results
 
     def get_scheme_by_id_or_name(self, identifier: str) -> Optional[Dict[str, Any]]:
-        """Returns the full record for a specific scheme by ID or name (exact match first)."""
         if not identifier:
             return None
         ident_lower = identifier.lower().strip()
@@ -249,45 +381,44 @@ class SchemeRepository:
 db_repo = SchemeRepository(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------------------------------------------------------------------------
-# 3. Tool Declarations for Gemini Live API
+# 4. Tool Declarations (Clean JSON Schema for Gemini Live API)
 # ---------------------------------------------------------------------------
 SEARCH_SCHEMES_DECLARATION = {
     "name": "search_schemes",
-    "behavior": "BLOCKING",
     "description": (
         "Searches Tamil Nadu welfare schemes using caller keywords or the Big 4 triage fields "
         "(age, gender, marital status, income, community). Call this when the caller mentions a specific need, "
         "a scheme name, or answers triage questions."
     ),
     "parameters": {
-        "type": "OBJECT",
+        "type": "object",
         "properties": {
             "query": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Scheme name keyword or benefit keyword, e.g. 'marriage', 'pudhumai penn', 'goat', 'sewing machine', 'loan'."
             },
             "age": {
-                "type": "INTEGER",
+                "type": "integer",
                 "description": "Age of the beneficiary."
             },
             "gender": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Gender of the beneficiary: 'female', 'male', 'transgender'."
             },
             "marital_status": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Marital/family status of beneficiary: 'single', 'married', 'widow', 'deserted', 'destitute'."
             },
             "income": {
-                "type": "INTEGER",
+                "type": "integer",
                 "description": "Annual family income in Rupees, e.g. 72000 or 250000."
             },
             "community": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Caste category if relevant: 'sc', 'st', 'scc', 'bc', 'mbc', 'fc'."
             },
             "special_condition": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Special attribute such as 'orphan', 'inter_caste', 'tailoring_trained', 'landless_agricultural_labourer'."
             }
         }
@@ -296,16 +427,15 @@ SEARCH_SCHEMES_DECLARATION = {
 
 GET_SCHEME_DETAILS_DECLARATION = {
     "name": "get_scheme_details",
-    "behavior": "BLOCKING",
     "description": (
         "Retrieves full application procedure, required documents, and contact details "
         "for a specific scheme ID or name once the caller chooses to explore it."
     ),
     "parameters": {
-        "type": "OBJECT",
+        "type": "object",
         "properties": {
             "scheme_identifier": {
-                "type": "STRING",
+                "type": "string",
                 "description": "Scheme UUID or scheme English/Tamil name."
             }
         },
@@ -313,15 +443,8 @@ GET_SCHEME_DETAILS_DECLARATION = {
     }
 }
 
-# ---------------------------------------------------------------------------
-# 4. Tool Execution Handler (Dual-Mode Single-Match Preloader)
-# ---------------------------------------------------------------------------
 async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Executes function calls requested by Gemini.
-    - Mode 1: If 1 match, bundle 1-liner + preload full documents so follow-up is instant.
-    - Mode 2: If 2-4 matches, return lightweight summaries so the caller can choose first.
-    """
+    """Executes tool lookups against in-memory scheme cache."""
     if tool_name == "search_schemes":
         matches = db_repo.search_schemes(
             query=args.get("query"),
@@ -334,14 +457,13 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         )
 
         total_found = len(matches)
-
         if total_found == 0:
             return {
                 "count": 0,
                 "message": "No schemes matched the provided criteria."
             }
 
-        # MODE 1: Exactly 1 Match -> Bundle 1-line benefit AND preload full details!
+        # Mode 1: Single Match -> 1-liner benefit + preloaded details
         if total_found == 1:
             scheme = matches[0]
             return {
@@ -364,7 +486,7 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
                 }
             }
 
-        # MODE 2: Multiple Matches (2 to 4) -> Lightweight summary options only
+        # Mode 2: Multiple Matches -> 2 to 4 concise options
         summary_list = []
         for s in matches[:4]:
             summary_list.append({
@@ -404,16 +526,16 @@ async def execute_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"error": f"Unknown tool: {tool_name}"}
 
 # ---------------------------------------------------------------------------
-# 5. FastAPI Application & Lifecycle
+# 5. FastAPI App Lifecycle & Routes
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up Ungal Vijay Backend Server (Gemini 3.8 Live Engine)...")
+    logger.info("Initializing Ungal Vijay v2 Backend...")
     await db_repo.warm_up_cache()
     yield
-    logger.info("Ungal Vijay Backend Server shutdown complete.")
+    logger.info("Ungal Vijay v2 Backend shutdown.")
 
-app = FastAPI(title="Ungal Vijay Voice AI Backend (Gemini 3.8 Live)", lifespan=lifespan)
+app = FastAPI(title="Ungal Vijay v2 (Gemini Live Solved Architecture)", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -423,6 +545,84 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "version": "v2.0",
+        "cached_schemes": len(db_repo.cached_schemes),
+        "model": GEMINI_LIVE_MODEL,
+        "voice": GEMINI_LIVE_VOICE
+    }
+
+@app.post("/api/token")
+async def create_ephemeral_token():
+    """Generates an ephemeral token for direct browser-to-Gemini WebSocket connection."""
+    global ai_client
+    if not ai_client:
+        key = os.getenv("GEMINI_API_KEY", "").strip()
+        if key:
+            ai_client = genai.Client(api_key=key)
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="GEMINI_API_KEY is not configured on the backend server. Please set GEMINI_API_KEY in environment variables."
+            )
+
+    try:
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        expire_time = now + datetime.timedelta(minutes=30)
+        
+        token = ai_client.auth_tokens.create(
+            config={
+                "uses": 1,
+                "expire_time": expire_time.isoformat(),
+                "new_session_expire_time": (now + datetime.timedelta(minutes=5)).isoformat(),
+                "http_options": {"api_version": "v1beta"},
+            }
+        )
+        return {
+            "token": token.name,
+            "expires_at": expire_time.isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error generating ephemeral token: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate ephemeral token: {str(e)}")
+
+@app.get("/api/config")
+async def get_client_config():
+    """Returns runtime model configuration and tool schemas for client setup."""
+    return {
+        "model": GEMINI_LIVE_MODEL,
+        "voice": GEMINI_LIVE_VOICE,
+        "system_instruction": SYSTEM_PROMPT,
+        "tools": [SEARCH_SCHEMES_DECLARATION, GET_SCHEME_DETAILS_DECLARATION],
+        "greeting": OPENING_GREETING
+    }
+
+@app.post("/api/search_schemes")
+async def api_search_schemes(request: Request):
+    """Backend execution endpoint for Gemini function call: search_schemes."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    result = await execute_tool("search_schemes", body)
+    return result
+
+@app.post("/api/get_scheme_details")
+async def api_get_scheme_details(request: Request):
+    """Backend execution endpoint for Gemini function call: get_scheme_details."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    result = await execute_tool("get_scheme_details", body)
+    return result
+
+# ---------------------------------------------------------------------------
+# 6. Static Files & Frontend Serving
+# ---------------------------------------------------------------------------
 frontend_candidates = [
     os.environ.get("FRONTEND_DIR"),
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend")),
@@ -436,314 +636,32 @@ for candidate in frontend_candidates:
         break
 
 if frontend_dir:
-    logger.info(f"Serving frontend from: {frontend_dir}")
+    logger.info(f"Serving frontend assets from: {frontend_dir}")
+    
+    # Mount subdirectories if present
     img_dir = os.path.join(frontend_dir, "img")
     if os.path.exists(img_dir):
         app.mount("/img", StaticFiles(directory=img_dir), name="img")
-    app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
-    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+        app.mount("/frontend/img", StaticFiles(directory=img_dir), name="frontend_img")
 
-@app.get("/")
-async def serve_index():
-    if frontend_dir:
-        index_path = os.path.join(frontend_dir, "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-    return {"message": "Ungal Vijay Voice AI is running. Frontend index.html not found."}
+    processors_dir = os.path.join(frontend_dir, "audio-processors")
+    if os.path.exists(processors_dir):
+        app.mount("/audio-processors", StaticFiles(directory=processors_dir), name="processors")
+        app.mount("/frontend/audio-processors", StaticFiles(directory=processors_dir), name="frontend_processors")
 
-@app.get("/index.html")
-async def serve_index_html():
-    return await serve_index()
+    @app.get("/")
+    async def serve_index():
+        index_file = os.path.join(frontend_dir, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        return JSONResponse({"message": "Frontend index.html not found"}, status_code=404)
 
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "engine": "gemini-3.8-live",
-        "schemes_cached": len(db_repo.cached_schemes),
-        "supabase_connected": db_repo.client is not None,
-        "gemini_api_key_configured": bool(GEMINI_API_KEY)
-    }
+    # Mount remaining static files at root
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend_root")
+else:
+    logger.warning("No frontend directory found. Serving API endpoints only.")
 
-
-# ---------------------------------------------------------------------------
-# 6. WebSocket Telephony Bridge (Browser <-> Python <-> Gemini Live)
-# ---------------------------------------------------------------------------
-@app.websocket("/ws/call")
-async def websocket_call_endpoint(client_ws: WebSocket):
-    """
-    Bidirectional streaming bridge:
-    - Receives microphone PCM audio (16kHz) from browser and forwards to Gemini Live.
-    - Handles tool calling locally against the cached 25 schemes.
-    - Relays synthesized 24kHz voice bytes and live subtitles back to browser.
-    """
-    await client_ws.accept()
-    logger.info("Caller connected from browser client.")
-
-    if not GEMINI_API_KEY:
-        await client_ws.send_json({
-            "type": "error",
-            "message": "GEMINI_API_KEY is missing on the server. Please check your .env file."
-        })
-        await client_ws.close()
-        return
-
-    try:
-        # Initialize Google GenAI client with v1alpha (verified successful for live audio with AQ Auth keys)
-        gemini_client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options=types.HttpOptions(api_version="v1alpha")
-        )
-
-        # Configure session with audio transcription for real-time subtitles
-        live_config = types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=GEMINI_LIVE_VOICE
-                    )
-                )
-            ),
-            system_instruction=types.Content(
-                parts=[types.Part.from_text(text=SYSTEM_PROMPT)]
-            ),
-            tools=[{
-                "function_declarations": [
-                    SEARCH_SCHEMES_DECLARATION,
-                    GET_SCHEME_DETAILS_DECLARATION
-                ]
-            }]
-        )
-
-        # Robust model resolution: try configured model, then standard live models
-        candidates = [
-            GEMINI_LIVE_MODEL,
-            "gemini-2.0-flash-exp",
-            "gemini-2.0-flash-realtime-exp",
-            "gemini-2.5-flash"
-        ]
-        candidates = list(dict.fromkeys(candidates))
-
-        connected_cm = None
-        session = None
-        active_model = None
-
-        for cand in candidates:
-            try:
-                cm = gemini_client.aio.live.connect(model=cand, config=live_config)
-                session = await cm.__aenter__()
-                connected_cm = cm
-                active_model = cand
-                logger.info(f"Connected to Gemini Live session using model '{cand}' with voice '{GEMINI_LIVE_VOICE}'.")
-                break
-            except Exception as e:
-                logger.warning(f"Model candidate '{cand}' rejected ({e}). Trying next...")
-
-        if not connected_cm or not session:
-            raise RuntimeError(f"Gemini Live rejected connection on all candidate models ({candidates}). Check API key access in Google AI Studio.")
-
-        try:
-            # Stream A: Forward client microphone audio / commands to Gemini Live
-            async def forward_client_to_gemini():
-                audio_packets_sent = 0
-                try:
-                    while True:
-                        message = await client_ws.receive()
-                        msg_type = message.get("type")
-                        if msg_type == "websocket.disconnect":
-                            logger.info("Browser WebSocket disconnected.")
-                            break
-
-                        pcm_bytes = None
-                        if message.get("bytes"):
-                            pcm_bytes = message["bytes"]
-                        elif message.get("text"):
-                            try:
-                                event = json.loads(message["text"])
-                            except Exception:
-                                continue
-                            event_type = event.get("type")
-                            if event_type == "audio_chunk":
-                                raw_base64 = event.get("audio", "")
-                                if raw_base64:
-                                    pcm_bytes = base64.b64decode(raw_base64)
-                            elif event_type == "call.hangup":
-                                logger.info("Caller hung up from browser.")
-                                break
-
-                        if pcm_bytes:
-                            # Forward exact protobuf realtimeInput structure to Gemini Live
-                            b64_audio = base64.b64encode(pcm_bytes).decode("utf-8")
-                            realtime_payload = {
-                                "realtimeInput": {
-                                    "mediaChunks": [
-                                        {
-                                            "mimeType": "audio/pcm;rate=16000",
-                                            "data": b64_audio
-                                        }
-                                    ]
-                                }
-                            }
-                            # Send directly to the active websocket connection
-                            if hasattr(session, '_ws') and session._ws:
-                                await session._ws.send(json.dumps(realtime_payload))
-                            else:
-                                await session.send_realtime_input(
-                                    media=types.Blob(data=pcm_bytes, mime_type="audio/pcm;rate=16000")
-                                )
-                            audio_packets_sent += 1
-                            if audio_packets_sent % 50 == 0:
-                                logger.info(f"Streamed {audio_packets_sent} mic packets to Gemini Live.")
-                except (WebSocketDisconnect, asyncio.CancelledError):
-                    logger.info("Browser WebSocket disconnected.")
-                except Exception as e:
-                    logger.error(f"Error in client-to-gemini stream: {e}")
-
-            # Stream B: Receive Gemini audio/subtitles + execute tools (continuous multi-turn stream)
-            async def forward_gemini_to_client():
-                try:
-                    while True:
-                        # Direct call to session._receive() persists indefinitely across all conversational turns
-                        response = await session._receive()
-                        if not response:
-                            continue
-
-                        # 1. Handle Tool / Function Calls
-                        if response.tool_call:
-                            function_responses = []
-                            for fc in response.tool_call.function_calls:
-                                args = fc.args or {}
-                                logger.info(f"Gemini invoked tool: {fc.name} with args {args}")
-                                try:
-                                    result = await execute_tool(fc.name, args)
-                                except Exception as e:
-                                    logger.exception(f"Tool {fc.name} execution failed: {e}")
-                                    result = {"error": f"Data lookup error: {str(e)}"}
-
-                                function_responses.append(
-                                    types.FunctionResponse(
-                                        name=fc.name,
-                                        id=fc.id,
-                                        response={"result": result}
-                                    )
-                                )
-
-                            # Return tool output back to Gemini
-                            await session.send_tool_response(function_responses=function_responses)
-
-                        sc = response.server_content
-                        if not sc:
-                            continue
-
-                        # Interruption event: User started talking, Gemini cut audio
-                        if sc.interrupted:
-                            logger.info("Gemini playback interrupted by caller speech.")
-                            await client_ws.send_json({"type": "interrupted"})
-
-                        # Log caller speech when transcribed (verifies mic pipeline)
-                        if sc.input_transcription and sc.input_transcription.text:
-                            logger.info(f"Caller said: {sc.input_transcription.text}")
-
-                        # Extract real-time speech subtitles from output_transcription
-                        if sc.output_transcription and sc.output_transcription.text:
-                            logger.info(f"AI Subtitle (output_transcription): {sc.output_transcription.text}")
-                            await client_ws.send_json({
-                                "type": "ai_transcript_delta",
-                                "delta": sc.output_transcription.text
-                            })
-
-                        if sc.model_turn:
-                            for part in sc.model_turn.parts:
-                                # Extract real-time speech subtitles from text part if provided
-                                if part.text:
-                                    logger.info(f"AI Subtitle (model_turn.part.text): {part.text}")
-                                    await client_ws.send_json({
-                                        "type": "ai_transcript_delta",
-                                        "delta": part.text
-                                    })
-                                # Audio chunk (24kHz PCM)
-                                if part.inline_data and part.inline_data.data:
-                                    audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                                    await client_ws.send_json({
-                                        "type": "audio_delta",
-                                        "delta": audio_b64
-                                    })
-
-                        if sc.turn_complete:
-                            logger.info("Turn complete from Gemini. Session remains open and listening.")
-                            await client_ws.send_json({"type": "turn_complete"})
-
-                except (asyncio.CancelledError, WebSocketDisconnect):
-                    pass
-                except Exception as e:
-                    logger.error(f"Error in gemini-to-client stream: {e}")
-
-            # Spawn both streaming background tasks (listener active before greeting)
-            t1 = asyncio.create_task(forward_client_to_gemini())
-            t2 = asyncio.create_task(forward_gemini_to_client())
-
-            # Trigger opening greeting immediately upon connection
-            await session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(
-                        text="Start the call now by speaking the official opening greeting exactly as instructed."
-                    )]
-                ),
-                turn_complete=True
-            )
-
-            # Notify browser client that bridge is active and ready for caller speech
-            await client_ws.send_json({"type": "ready"})
-
-            # Wait until either client disconnects or Gemini closes
-            done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
-            for t in pending:
-                t.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-        finally:
-            if 't1' in locals() and t1 and not t1.done():
-                t1.cancel()
-            if 't2' in locals() and t2 and not t2.done():
-                t2.cancel()
-            if session and hasattr(session, '_ws') and session._ws:
-                try:
-                    await session._ws.close()
-                except Exception:
-                    pass
-            if connected_cm:
-                try:
-                    await connected_cm.__aexit__(None, None, None)
-                    logger.info("Gemini Live session closed cleanly.")
-                except Exception as ce:
-                    logger.warning(f"Notice while closing Gemini session: {ce}")
-            try:
-                await gemini_client.aio.aclose()
-            except Exception:
-                pass
-
-    except Exception as e:
-        logger.error(f"Telephony bridge failed: {e}")
-        try:
-            await client_ws.send_json({
-                "type": "error",
-                "message": f"Connection to Gemini voice service failed: {str(e)}"
-            })
-        except Exception:
-            pass
-    finally:
-        try:
-            await client_ws.close()
-        except Exception:
-            pass
-        logger.info("Call session ended.")
-
-# ---------------------------------------------------------------------------
-# 7. Runner Entrypoint
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host=HOST, port=PORT, reload=True)
+    logger.info(f"Starting Ungal Vijay v2 on http://{HOST}:{PORT}")
+    uvicorn.run("app:app", host=HOST, port=PORT, reload=False)
