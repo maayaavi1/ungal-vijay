@@ -1,12 +1,11 @@
 /**
- * Audio Worklet Processor for capturing and processing microphone audio
- * Based on Google's official Gemini Live API reference implementation
+ * Audio Worklet Processor for capturing and processing audio
  */
 
 class AudioCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.bufferSize = 512; // 32ms at 16kHz - per Gemini best practices (20-40ms chunks)
+    this.bufferSize = 512; // 32ms at 16kHz — per Gemini best practices (20-40ms chunks)
     this.buffer = new Float32Array(this.bufferSize);
     this.bufferIndex = 0;
   }

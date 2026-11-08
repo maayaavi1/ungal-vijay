@@ -2,7 +2,6 @@
  * Audio Playback Worklet Processor for playing PCM audio.
  * Uses an offset tracker instead of slice() to avoid allocations
  * on the real-time audio thread.
- * Based on Google's official Gemini Live API reference implementation
  */
 
 class PCMProcessor extends AudioWorkletProcessor {

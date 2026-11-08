@@ -353,7 +353,7 @@ body.call .label-end {
   * { transition: none !important; }
 }
 
-/* Persistent Error Panel */
+/* Persistent Copyable Error Panel */
 .error-panel {
   display: none;
   flex-direction: column;
@@ -369,6 +369,13 @@ body.call .label-end {
   border: 1px solid rgba(200, 61, 54, 0.22);
   z-index: 50;
   animation: errorPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+.error-panel, .error-panel * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 @keyframes errorPop {
@@ -386,6 +393,9 @@ body.call .label-end {
   padding: 4px 10px;
   border-radius: 20px;
   margin-bottom: 12px;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
 }
 
 .error-detail {
@@ -395,6 +405,9 @@ body.call .label-end {
   color: var(--text);
   margin-bottom: 18px;
   word-break: break-word;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
 }
 
 .error-dismiss-btn {
@@ -406,7 +419,9 @@ body.call .label-end {
   font-weight: 600;
   padding: 10px 26px;
   border-radius: 24px;
-  cursor: pointer;
+  cursor: pointer !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
   box-shadow: 0 2px 8px rgba(32, 41, 35, 0.18);
   transition: transform 0.18s ease;
 }
@@ -561,8 +576,17 @@ body.call .label-end {
   </footer>
 </div>
 
+<!-- Standalone Google Solved Modules -->
+<script src="geminilive.js"></script>
+<script src="mediaUtils.js"></script>
+
 <script>
-(() => {
+(function() {
+  'use strict';
+
+  // --------------------------------------------------------------------------
+  // DOM References & Helper
+  // --------------------------------------------------------------------------
   const $ = s => document.querySelector(s);
   const body = document.body;
   const cv = $('#eq');
@@ -591,15 +615,14 @@ body.call .label-end {
         volIcon.innerHTML = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
       }
     }
-    localStorage.setItem('ungal_vijay_vol', v.toString());
   }
 
   if (volSlider) {
     volSlider.value = currentVolume;
-    volText.textContent = Math.round(currentVolume * 100) + '%';
-    volSlider.addEventListener('input', e => {
+    updateVolumeUI(currentVolume);
+    volSlider.addEventListener('input', (e) => {
       currentVolume = parseFloat(e.target.value);
-      if (currentVolume > 0) prevVolume = currentVolume;
+      localStorage.setItem('ungal_vijay_vol', currentVolume);
       updateVolumeUI(currentVolume);
     });
   }
@@ -610,350 +633,66 @@ body.call .label-end {
         prevVolume = currentVolume;
         currentVolume = 0;
       } else {
-        currentVolume = prevVolume || 1.0;
+        currentVolume = prevVolume > 0 ? prevVolume : 1.0;
       }
+      localStorage.setItem('ungal_vijay_vol', currentVolume);
       updateVolumeUI(currentVolume);
     });
   }
 
   function showError(msg) {
-    if (active) endCall();
-    errDetail.textContent = msg;
-    errPanel.style.display = 'flex';
+    console.error('Call Error:', msg);
+    if (errDetail) errDetail.textContent = msg;
+    if (errPanel) errPanel.style.display = 'flex';
   }
 
-  errDismiss.addEventListener('click', () => {
-    errPanel.style.display = 'none';
-    errDetail.textContent = '';
-  });
-
-  // Base64 Helpers
-  function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary);
-  }
-
-  function base64ToFloat32Array(base64) {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const int16Array = new Int16Array(bytes.buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
-    }
-    return float32Array;
+  if (errDismiss) {
+    errDismiss.addEventListener('click', () => {
+      if (errPanel) errPanel.style.display = 'none';
+    });
   }
 
   // --------------------------------------------------------------------------
-  // Audio Player (Google Reference Implementation, 24kHz PCM Worklet)
-  // --------------------------------------------------------------------------
-  class GeminiAudioPlayer {
-    constructor() {
-      this.audioContext = null;
-      this.workletNode = null;
-      this.gainNode = null;
-      this.analyser = null;
-      this.isInitialized = false;
-      this.volume = currentVolume;
-    }
-
-    async init(sharedAnalyser) {
-      if (this.isInitialized) return;
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
-      // Add playback worklet module (from server or fallback inline)
-      try {
-        await this.audioContext.audioWorklet.addModule('/audio-processors/playback.worklet.js');
-      } catch (err) {
-        console.warn('Could not load playback worklet directly, creating blob URL fallback...', err);
-        const workletCode = `
-          class PCMProcessor extends AudioWorkletProcessor {
-            constructor() {
-              super();
-              this.audioQueue = [];
-              this.currentOffset = 0;
-              this.port.onmessage = (e) => {
-                if (e.data === "interrupt") {
-                  this.audioQueue = [];
-                  this.currentOffset = 0;
-                } else if (e.data instanceof Float32Array) {
-                  this.audioQueue.push(e.data);
-                }
-              };
-            }
-            process(inputs, outputs) {
-              const output = outputs[0];
-              if (output.length === 0) return true;
-              const ch = output[0];
-              let outIdx = 0;
-              while (outIdx < ch.length && this.audioQueue.length > 0) {
-                const buf = this.audioQueue[0];
-                if (!buf || buf.length === 0) {
-                  this.audioQueue.shift();
-                  this.currentOffset = 0;
-                  continue;
-                }
-                const remOut = ch.length - outIdx;
-                const remBuf = buf.length - this.currentOffset;
-                const cpy = Math.min(remOut, remBuf);
-                for (let i = 0; i < cpy; i++) ch[outIdx++] = buf[this.currentOffset++];
-                if (this.currentOffset >= buf.length) {
-                  this.audioQueue.shift();
-                  this.currentOffset = 0;
-                }
-              }
-              while (outIdx < ch.length) ch[outIdx++] = 0;
-              return true;
-            }
-          }
-          registerProcessor("pcm-processor", PCMProcessor);
-        `;
-        const blob = new Blob([workletCode], { type: 'application/javascript' });
-        await this.audioContext.audioWorklet.addModule(URL.createObjectURL(blob));
-      }
-
-      this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
-      this.gainNode = this.audioContext.createGain();
-      this.gainNode.gain.value = this.volume;
-
-      this.workletNode.connect(this.gainNode);
-      this.gainNode.connect(this.audioContext.destination);
-
-      if (sharedAnalyser) {
-        this.gainNode.connect(sharedAnalyser);
-      }
-
-      this.isInitialized = true;
-    }
-
-    play(base64Audio) {
-      if (!this.isInitialized || !this.workletNode) return;
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-      const float32Data = base64ToFloat32Array(base64Audio);
-      this.workletNode.port.postMessage(float32Data);
-    }
-
-    interrupt() {
-      if (this.workletNode) {
-        this.workletNode.port.postMessage('interrupt');
-      }
-    }
-
-    setVolume(v) {
-      this.volume = Math.max(0, Math.min(1, v));
-      if (this.gainNode && this.audioContext) {
-        try {
-          this.gainNode.gain.setValueAtTime(this.volume, this.audioContext.currentTime);
-        } catch (e) {
-          this.gainNode.gain.value = this.volume;
-        }
-      }
-    }
-
-    destroy() {
-      if (this.workletNode) {
-        try { this.workletNode.disconnect(); } catch (e) {}
-        this.workletNode = null;
-      }
-      if (this.gainNode) {
-        try { this.gainNode.disconnect(); } catch (e) {}
-        this.gainNode = null;
-      }
-      if (this.audioContext) {
-        try { this.audioContext.close(); } catch (e) {}
-        this.audioContext = null;
-      }
-      this.isInitialized = false;
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Audio Capture Streamer (Google Reference Implementation, 16kHz Worklet)
-  // --------------------------------------------------------------------------
-  class GeminiAudioStreamer {
-    constructor(onPcmChunk) {
-      this.onPcmChunk = onPcmChunk;
-      this.audioContext = null;
-      this.workletNode = null;
-      this.mediaStream = null;
-      this.audioSource = null;
-      this.isStreaming = false;
-      this.analyser = null;
-    }
-
-    async start(sharedAnalyser) {
-      if (this.isStreaming) return;
-      this.analyser = sharedAnalyser;
-
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-      });
-
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
-      try {
-        await this.audioContext.audioWorklet.addModule('/audio-processors/capture.worklet.js');
-      } catch (err) {
-        console.warn('Could not load capture worklet directly, creating blob URL fallback...', err);
-        const workletCode = `
-          class AudioCaptureProcessor extends AudioWorkletProcessor {
-            constructor() {
-              super();
-              this.bufferSize = 512;
-              this.buffer = new Float32Array(this.bufferSize);
-              this.bufferIndex = 0;
-            }
-            process(inputs) {
-              const input = inputs[0];
-              if (input && input.length > 0) {
-                const ch = input[0];
-                for (let i = 0; i < ch.length; i++) {
-                  this.buffer[this.bufferIndex++] = ch[i];
-                  if (this.bufferIndex >= this.bufferSize) {
-                    this.port.postMessage({ type: "audio", data: this.buffer.slice() });
-                    this.bufferIndex = 0;
-                  }
-                }
-              }
-              return true;
-            }
-          }
-          registerProcessor("audio-capture-processor", AudioCaptureProcessor);
-        `;
-        const blob = new Blob([workletCode], { type: 'application/javascript' });
-        await this.audioContext.audioWorklet.addModule(URL.createObjectURL(blob));
-      }
-
-      this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-capture-processor');
-      this.workletNode.port.onmessage = (event) => {
-        if (!this.isStreaming) return;
-        if (event.data?.type === 'audio') {
-          const float32Array = event.data.data;
-          const int16Array = new Int16Array(float32Array.length);
-          for (let i = 0; i < float32Array.length; i++) {
-            const s = Math.max(-1, Math.min(1, float32Array[i]));
-            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-          }
-          const base64Pcm = arrayBufferToBase64(int16Array.buffer);
-          this.onPcmChunk(base64Pcm);
-        }
-      };
-
-      this.audioSource = this.audioContext.createMediaStreamSource(this.mediaStream);
-      this.audioSource.connect(this.workletNode);
-
-      // Connect mic to shared AnalyserNode for capsule equalizer response
-      if (this.analyser) {
-        const micBoostGain = this.audioContext.createGain();
-        micBoostGain.gain.value = 2.2;
-        this.audioSource.connect(micBoostGain);
-        micBoostGain.connect(this.analyser);
-      }
-
-      this.isStreaming = true;
-    }
-
-    stop() {
-      this.isStreaming = false;
-      if (this.audioSource) {
-        try { this.audioSource.disconnect(); } catch (e) {}
-        this.audioSource = null;
-      }
-      if (this.mediaStream) {
-        this.mediaStream.getTracks().forEach(t => {
-          try { t.stop(); } catch (e) {}
-          t.enabled = false;
-        });
-        this.mediaStream = null;
-      }
-      if (this.audioContext) {
-        try { this.audioContext.close(); } catch (e) {}
-        this.audioContext = null;
-      }
-      this.workletNode = null;
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Visualizer / Capsule Equalizer (100% Flat on Silence, Sound-Reactive on Voice)
+  // Equalizer Visualizer (25 Capsule Bars, Pure Memory Array, No AudioNodes)
   // --------------------------------------------------------------------------
   const BAR_COUNT = 25;
-  const smoothed = new Float32Array(BAR_COUNT);
-  let W = 0, H = 0, raf = null, visualizerAnalyser = null;
+  const smoothed = new Array(BAR_COUNT).fill(4);
+  let W = 0, H = 0, dpr = 1;
+  let raf = null;
+  let speakerEnergy = 0;
 
   function sizeCanvas() {
-    const r = window.devicePixelRatio || 1;
-    W = cv.clientWidth;
-    H = cv.clientHeight;
-    cv.width = W * r;
-    cv.height = H * r;
-    g.setTransform(r, 0, 0, r, 0, 0);
+    dpr = window.devicePixelRatio || 1;
+    const rect = cv.getBoundingClientRect();
+    W = rect.width;
+    H = rect.height;
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function drawEqualizer() {
+    if (!active) return;
     raf = requestAnimationFrame(drawEqualizer);
-    if (!W || !H || cv.clientWidth !== W) {
-      sizeCanvas();
-    }
-    g.clearRect(0, 0, W, H);
 
-    // Muted Government Green gradient (#4e9a7b -> #245B46 -> #1a4233)
-    const grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#4e9a7b');
-    grad.addColorStop(0.5, '#245B46');
-    grad.addColorStop(1, '#1a4233');
-    g.fillStyle = grad;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = '#202923';
 
     const gap = W / BAR_COUNT;
-    const barWidth = Math.max(3.5, gap * 0.44);
+    const barWidth = 3;
+    const restHeight = 4;
     const mid = (BAR_COUNT - 1) / 2;
 
-    let data = null;
-    if (visualizerAnalyser) {
-      data = new Uint8Array(visualizerAnalyser.frequencyBinCount);
-      visualizerAnalyser.getByteFrequencyData(data);
-    }
-
-    const restHeight = 4; // Flat resting height when silent (strictly no sine wave)
+    speakerEnergy *= 0.88; // Smooth decay
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const distFromCenter = Math.abs(i - mid) / mid;
       let energy = 0;
-
-      if (data && data.length > 0) {
-        // Human vocal formants concentrate between 150Hz and 3400Hz
-        const vocalBin = Math.min(data.length - 1, 1 + Math.floor((1 - Math.pow(distFromCenter, 1.4)) * 14));
-        const rawVal = data[vocalBin] / 255.0;
-
-        // Clean noise floor: room silence below 0.05 ignored completely
-        if (rawVal > 0.05) {
-          energy = Math.min(1.0, ((rawVal - 0.05) / 0.95) * 2.4);
-        }
+      if (speakerEnergy > 0.04) {
+        energy = Math.min(1.0, speakerEnergy * (1 - distFromCenter * 0.35));
       }
-
-      // Flat still capsule bars on silence; dynamic energetic pulse when voice is present
-      const targetHeight = restHeight + Math.pow(energy, 1.1) * (H - restHeight) * 0.95 * (1 - distFromCenter * 0.2);
-      const smoothFactor = energy > 0 ? 0.38 : 0.20;
+      const targetHeight = restHeight + Math.pow(energy, 1.1) * (H - restHeight) * 0.95;
+      const smoothFactor = energy > 0 ? 0.40 : 0.22;
       smoothed[i] += (targetHeight - smoothed[i]) * smoothFactor;
 
       const barHeight = Math.max(restHeight, Math.min(H, smoothed[i]));
@@ -971,11 +710,30 @@ body.call .label-end {
     }
   }
 
+  function updateSpeakerEnergy(base64Audio) {
+    try {
+      const bin = atob(base64Audio);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+      const int16 = new Int16Array(bytes.buffer);
+      let sum = 0;
+      const step = Math.max(1, Math.floor(int16.length / 64));
+      let count = 0;
+      for (let i = 0; i < int16.length; i += step) {
+        const v = int16[i] / 32768.0;
+        sum += v * v;
+        count++;
+      }
+      speakerEnergy = Math.min(1.0, Math.sqrt(sum / count) * 4.5);
+    } catch (e) {}
+  }
+
   // --------------------------------------------------------------------------
-  // Core State & Direct WebSocket Connection to Gemini Live API
+  // Core State & Google Architecture
   // --------------------------------------------------------------------------
   let active = false;
-  let ws = null;
+  let client = null;
   let streamer = null;
   let player = null;
   let wakeLock = null;
@@ -992,7 +750,7 @@ body.call .label-end {
 
     body.className = 'call';
     subs.textContent = 'இணைக்கிறது... (Connecting...)';
-    errPanel.style.display = 'none';
+    if (errPanel) errPanel.style.display = 'none';
 
     sizeCanvas();
     drawEqualizer();
@@ -1021,197 +779,136 @@ body.call .label-end {
 
       if (!active) return; // User hung up during fetch
 
-      // Step 2: Initialize Shared Audio Visualizer Analyser
-      const visContext = new (window.AudioContext || window.webkitAudioContext)();
-      visualizerAnalyser = visContext.createAnalyser();
-      visualizerAnalyser.fftSize = 256;
-      visualizerAnalyser.smoothingTimeConstant = 0.78;
+      // Step 2: Initialize Google GeminiLiveAPI client
+      client = new GeminiLiveAPI(token, config.model || "gemini-2.0-flash-exp");
+      client.systemInstructions = config.system_instruction || "";
+      client.voiceName = config.voice || "Puck";
+      client.responseModalities = ["AUDIO"];
+      client.outputAudioTranscription = true;
+      client.inputAudioTranscription = true;
 
-      // Step 3: Initialize Google Reference Audio Player (24kHz)
-      player = new GeminiAudioPlayer();
-      await player.init(visualizerAnalyser);
+      // Register tools from config
+      if (Array.isArray(config.tools)) {
+        for (const toolDecl of config.tools) {
+          const tool = new FunctionCallDefinition(
+            toolDecl.name,
+            toolDecl.description,
+            toolDecl.parameters,
+            toolDecl.parameters?.required || []
+          );
+          tool.functionToCall = async (params) => {
+            console.log(`Executing tool: ${toolDecl.name}`, params);
+            const res = await fetch(`${API_BASE}/api/${toolDecl.name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(params || {})
+            });
+            return await res.json();
+          };
+          client.addFunction(tool);
+        }
+      }
 
-      // Step 4: Establish direct WebSocket to Gemini Live API
-      const directWsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
-      console.log('Connecting directly to Gemini Live WebSocket (v1alpha)...');
-
-      ws = new WebSocket(directWsUrl);
-
-      ws.onopen = () => {
-        console.log('Gemini Live WebSocket opened. Sending setup payload...');
-
-        const setupMessage = {
-          setup: {
-            model: "models/" + (config.model || "gemini-2.0-flash-exp"),
-            generationConfig: {
-              responseModalities: ["AUDIO"],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: config.voice || "Kore"
-                  }
-                }
-              }
-            },
-            systemInstruction: {
-              parts: [{ text: config.system_instruction }]
-            },
-            tools: [{ functionDeclarations: config.tools }],
-            outputAudioTranscription: {},
-            realtimeInputConfig: {
-              automaticActivityDetection: {
-                disabled: false
-              }
-            }
-          }
-        };
-
-        ws.send(JSON.stringify(setupMessage));
+      // Step 3: Register callbacks
+      client.onReceiveResponse = handleMessage;
+      client.onError = (err) => {
+        console.error('Gemini error:', err);
+        showError(typeof err === 'string' ? err : (err.message || 'Gemini connection error'));
+        if (active) endCall();
+      };
+      client.onClose = () => {
+        console.log('Gemini Live session closed');
+        if (active) endCall();
       };
 
-      ws.onmessage = async (event) => {
-        let textData = event.data;
-        if (textData instanceof Blob) {
-          textData = await textData.text();
-        } else if (textData instanceof ArrayBuffer) {
-          textData = new TextDecoder().decode(textData);
-        }
+      // Step 4: Initialize Google Reference Audio Player (24kHz)
+      player = new AudioPlayer();
+      await player.init();
+      player.setVolume(currentVolume);
 
-        try {
-          const msg = JSON.parse(textData);
-          handleGeminiMessage(msg, config);
-        } catch (e) {
-          console.error('Error parsing Gemini message:', e, textData);
-        }
-      };
+      // Step 5: Connect directly to Gemini Live WebSocket
+      await client.connect();
 
-      ws.onerror = (e) => {
-        console.error('Gemini WebSocket error:', e);
-        showError('Gemini இணைப்பு பிழை (WebSocket connection error)');
-      };
-
-      ws.onclose = (e) => {
-        console.log('Gemini WebSocket closed:', e);
-        if (active) {
-          endCall();
-        }
-      };
-
-      // Step 5: Start microphone streaming via AudioCaptureProcessor worklet
-      streamer = new GeminiAudioStreamer((base64Pcm) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            realtimeInput: {
-              mediaChunks: [
-                {
-                  mimeType: "audio/pcm;rate=16000",
-                  data: base64Pcm
-                }
-              ]
-            }
-          }));
-        }
-      });
-
-      await streamer.start(visualizerAnalyser);
+      // Step 6: Start microphone streaming via Google AudioStreamer (16kHz)
+      streamer = new AudioStreamer(client);
+      await streamer.start();
 
     } catch (err) {
       console.error('Failed to start call:', err);
       showError(err.message || 'அழைப்பைத் தொடங்குவதில் பிழை ஏற்பட்டது.');
+      endCall();
     }
   }
 
   // --------------------------------------------------------------------------
-  // Handle Incoming Messages from Gemini Live API
+  // Handle Incoming Messages from Gemini Live API (Google Solved Logic)
   // --------------------------------------------------------------------------
-  async function handleGeminiMessage(msg, config) {
-    // 1. Setup Complete -> Prompt opening greeting
-    if (msg.setupComplete) {
-      console.log('Gemini Live setup complete. Prompting opening greeting...');
+  async function handleMessage(message) {
+    if (message.type === MultimodalLiveResponseType.SETUP_COMPLETE) {
+      console.log('🏁 Gemini Live setup complete. Prompting opening greeting...');
       subs.textContent = '';
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          clientContent: {
-            turns: [
-              {
-                role: "user",
-                parts: [{ text: "Call connected. Greet the citizen now with the official opening greeting in spoken Tanglish." }]
-              }
-            ],
-            turnComplete: true
-          }
-        }));
+      if (client && client.connected) {
+        client.sendClientContentMessage(
+          "Call connected. Greet the citizen now with the official opening greeting in spoken Tanglish.",
+          true
+        );
       }
       return;
     }
 
-    // 2. Tool Calling (Function Calls: search_schemes, get_scheme_details)
-    if (msg.toolCall) {
-      const calls = msg.toolCall.functionCalls || [];
-      console.log('Gemini requested tool calls:', calls);
-
-      const responses = await Promise.all(calls.map(async (call) => {
-        const { id, name, args } = call;
-        let endpoint = name === 'get_scheme_details' ? `${API_BASE}/api/get_scheme_details` : `${API_BASE}/api/search_schemes`;
-        try {
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args || {})
-          });
-          const result = await res.json();
-          return { id, name, response: { result: result } };
-        } catch (e) {
-          console.error(`Error executing tool ${name}:`, e);
-          return { id, name, response: { error: e.message } };
-        }
-      }));
-
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log('Sending tool response back to Gemini:', responses);
-        ws.send(JSON.stringify({
-          toolResponse: {
-            functionResponses: responses
-          }
-        }));
+    if (message.type === MultimodalLiveResponseType.AUDIO) {
+      if (player) {
+        player.play(message.data);
+        updateSpeakerEnergy(message.data);
       }
       return;
     }
 
-    const serverContent = msg.serverContent;
-    if (!serverContent) return;
+    if (message.type === MultimodalLiveResponseType.OUTPUT_TRANSCRIPTION) {
+      if (message.data && message.data.text) {
+        subs.textContent += message.data.text;
+      }
+      return;
+    }
 
-    // 3. Barge-in / Interrupted
-    if (serverContent.interrupted) {
-      console.log('Model interrupted by user voice');
+    if (message.type === MultimodalLiveResponseType.INTERRUPTED) {
+      console.log('🛑 Model interrupted by user voice');
       if (player) player.interrupt();
       subs.textContent = '';
+      speakerEnergy = 0;
+      return;
     }
 
-    // 4. Real-time Subtitles (output transcription text)
-    if (serverContent.outputTranscription?.text) {
-      subs.textContent += serverContent.outputTranscription.text;
-    }
-
-    // 5. Audio and Text Model Turns
-    const parts = serverContent.modelTurn?.parts || [];
-    for (const part of parts) {
-      if (part.inlineData?.data) {
-        if (player) player.play(part.inlineData.data);
-      }
-      if (part.text && !serverContent.outputTranscription) {
-        subs.textContent += part.text;
-      }
-    }
-
-    // 6. Turn Complete
-    if (serverContent.turnComplete) {
+    if (message.type === MultimodalLiveResponseType.TURN_COMPLETE) {
       console.log('Turn complete');
+      return;
+    }
+
+    if (message.type === MultimodalLiveResponseType.TOOL_CALL) {
+      console.log('🛠️ Tool call received:', message.data);
+      const functionCalls = message.data.functionCalls || [];
+      Promise.all(
+        functionCalls.map(async (call) => {
+          const { name, id, args } = call;
+          try {
+            const result = await client.callFunction(name, args);
+            return { id, name, response: { result: result ?? 'ok' } };
+          } catch (err) {
+            console.error(`Error executing tool ${name}:`, err);
+            return { id, name, response: { error: err.message } };
+          }
+        })
+      ).then((responses) => {
+        if (client && client.connected) {
+          client.sendToolResponse(responses);
+        }
+      });
+      return;
     }
   }
 
   // --------------------------------------------------------------------------
-  // End Call & Complete Hardware/Network Teardown
+  // End Call & Complete Teardown
   // --------------------------------------------------------------------------
   function endCall() {
     active = false;
@@ -1222,34 +919,29 @@ body.call .label-end {
       raf = null;
     }
 
-    // Clear and flatten equalizer canvas
     if (g && W && H) {
       g.clearRect(0, 0, W, H);
       smoothed.fill(4);
     }
-
+    speakerEnergy = 0;
     subs.textContent = '';
 
-    // Stop microphone stream and close mic hardware
     if (streamer) {
-      streamer.stop();
+      try { streamer.destroy(); } catch (e) {}
       streamer = null;
     }
 
-    // Interrupt and destroy audio player
     if (player) {
-      player.interrupt();
-      player.destroy();
+      try {
+        player.interrupt();
+        player.destroy();
+      } catch (e) {}
       player = null;
     }
 
-    // Close direct Gemini WebSocket
-    if (ws) {
-      try {
-        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
-        ws.close();
-      } catch (e) {}
-      ws = null;
+    if (client) {
+      try { client.disconnect(); } catch (e) {}
+      client = null;
     }
 
     if (wakeLock) {
