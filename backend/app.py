@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import logging
 import datetime
 from typing import Dict, Any, List, Optional
@@ -67,8 +68,8 @@ OPENING_GREETING = (
 ai_client: Optional[genai.Client] = None
 if GEMINI_API_KEY:
     try:
-        ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info("Google GenAI client initialized with API key.")
+        ai_client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(api_version="v1alpha"))
+        logger.info("Google GenAI client initialized with API key (v1alpha).")
     except Exception as e:
         logger.error(f"Failed to initialize Google GenAI client: {e}")
 else:
@@ -562,7 +563,7 @@ async def create_ephemeral_token():
     if not ai_client:
         key = os.getenv("GEMINI_API_KEY", "").strip()
         if key:
-            ai_client = genai.Client(api_key=key)
+            ai_client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version="v1alpha"))
         else:
             raise HTTPException(
                 status_code=500,
@@ -578,7 +579,7 @@ async def create_ephemeral_token():
                 "uses": 1,
                 "expire_time": expire_time.isoformat(),
                 "new_session_expire_time": (now + datetime.timedelta(minutes=5)).isoformat(),
-                "http_options": {"api_version": "v1beta"},
+                "http_options": {"api_version": "v1alpha"},
             }
         )
         return {

@@ -1026,8 +1026,8 @@ body.call .label-end {
       await player.init(visualizerAnalyser);
 
       // Step 4: Establish direct WebSocket to Gemini Live API
-      const directWsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
-      console.log('Connecting directly to Gemini Live WebSocket...');
+      const directWsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
+      console.log('Connecting directly to Gemini Live WebSocket (v1alpha)...');
 
       ws = new WebSocket(directWsUrl);
 
