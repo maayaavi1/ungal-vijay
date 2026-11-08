@@ -980,6 +980,12 @@ body.call .label-end {
   let player = null;
   let wakeLock = null;
 
+  // Backend API URL (Routes to Railway when hosted on Cloudflare Pages)
+  const RAILWAY_BACKEND = 'https://ungal-vijay-production.up.railway.app';
+  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? ''
+    : RAILWAY_BACKEND;
+
   async function startCall() {
     if (active) return;
     active = true;
@@ -996,10 +1002,10 @@ body.call .label-end {
     } catch (e) {}
 
     try {
-      // Step 1: Fetch runtime configuration and ephemeral token from backend
+      // Step 1: Fetch runtime configuration and ephemeral token from Railway backend
       const [tokenRes, configRes] = await Promise.all([
-        fetch('/api/token', { method: 'POST' }),
-        fetch('/api/config')
+        fetch(`${API_BASE}/api/token`, { method: 'POST' }),
+        fetch(`${API_BASE}/api/config`)
       ]);
 
       if (!tokenRes.ok) {
@@ -1146,7 +1152,7 @@ body.call .label-end {
 
       const responses = await Promise.all(calls.map(async (call) => {
         const { id, name, args } = call;
-        let endpoint = name === 'get_scheme_details' ? '/api/get_scheme_details' : '/api/search_schemes';
+        let endpoint = name === 'get_scheme_details' ? `${API_BASE}/api/get_scheme_details` : `${API_BASE}/api/search_schemes`;
         try {
           const res = await fetch(endpoint, {
             method: 'POST',
