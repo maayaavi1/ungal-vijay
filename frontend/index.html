@@ -418,6 +418,94 @@ body.call .label-end {
   transform: scale(0.96);
 }
 
+
+/* 4. Volume Control Dock */
+.volume-dock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(32, 41, 35, 0.05);
+  border: 1px solid rgba(32, 41, 35, 0.08);
+  border-radius: 20px;
+  padding: 6px 14px;
+  margin-top: 2px;
+  box-shadow: 0 1px 3px rgba(32, 41, 35, 0.04);
+}
+
+.volume-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  outline: none;
+  transition: color 0.2s ease, transform 0.15s ease;
+}
+
+.volume-btn:hover {
+  color: var(--text);
+  transform: scale(1.08);
+}
+
+.volume-btn:active {
+  transform: scale(0.92);
+}
+
+.volume-btn svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+}
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(32, 41, 35, 0.18);
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.15s ease;
+}
+
+.volume-slider::-webkit-slider-thumb:active {
+  transform: scale(1.2);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--green);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.volume-percent {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 34px;
+  text-align: right;
+  letter-spacing: -0.01em;
+}
+
 </style>
 </head>
 <body class="idle">
@@ -443,6 +531,13 @@ body.call .label-end {
       </div>
       <div class="subtitle-stream">
         <p class="subtitle-text" id="subs" aria-live="polite"></p>
+      </div>
+      <div class="volume-dock" id="volume-dock" aria-label="ஒலி அளவு கட்டுப்பாடு">
+        <button type="button" class="volume-btn" id="vol-mute-btn" aria-label="ஒலி இயக்கு / முடக்கு">
+          <svg id="vol-icon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
+        <input type="range" class="volume-slider" id="vol-slider" min="0" max="1" step="0.05" value="1" aria-label="ஒலி அளவு">
+        <span class="volume-percent" id="vol-text">100%</span>
       </div>
     </div>
 
@@ -479,25 +574,61 @@ body.call .label-end {
   const g = cv.getContext('2d');
   const subs = $('#subs');
 
-  let ws, ac, stream, node, an, wake, raf, nextT = 0, active = false, ready = false, newTurn = true;
+  let ws, ac, stream, node, an, micGain, masterGain, wake, raf, nextT = 0, active = false, ready = false, newTurn = true;
   const sources = new Set();
   const errPanel = $('#error-panel');
   const errDetail = $('#error-detail');
   const errDismiss = $('#error-dismiss-btn');
 
+  // Volume Controller State
+  let currentVolume = parseFloat(localStorage.getItem('ungal_vijay_vol') || '1.0');
+  let prevVolume = currentVolume > 0 ? currentVolume : 1.0;
+  const volSlider = $('#vol-slider');
+  const volText = $('#vol-text');
+  const volMuteBtn = $('#vol-mute-btn');
+  const volIcon = $('#vol-icon');
+
+  function updateVolumeUI(v) {
+    if (volSlider) volSlider.value = v;
+    if (volText) volText.textContent = Math.round(v * 100) + '%';
+    if (masterGain && ac) {
+      try { masterGain.gain.setValueAtTime(v, ac.currentTime); } catch (e) {}
+    }
+    if (volIcon) {
+      if (v === 0) {
+        volIcon.innerHTML = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+      } else {
+        volIcon.innerHTML = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+      }
+    }
+    localStorage.setItem('ungal_vijay_vol', v.toString());
+  }
+
+  if (volSlider) {
+    volSlider.value = currentVolume;
+    volText.textContent = Math.round(currentVolume * 100) + '%';
+    volSlider.addEventListener('input', e => {
+      currentVolume = parseFloat(e.target.value);
+      if (currentVolume > 0) prevVolume = currentVolume;
+      updateVolumeUI(currentVolume);
+    });
+  }
+
+  if (volMuteBtn) {
+    volMuteBtn.addEventListener('click', () => {
+      if (currentVolume > 0) {
+        prevVolume = currentVolume;
+        currentVolume = 0;
+      } else {
+        currentVolume = prevVolume || 1.0;
+      }
+      updateVolumeUI(currentVolume);
+    });
+  }
+
   function showError(msg) {
     if (active) {
-      active = false;
-      ready = false;
-      newTurn = true;
-      stopAudio();
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      try { ws && ws.close(); } catch (e) {}
-      try { ac && ac.close(); } catch (e) {}
-      try { wake && wake.release(); } catch (e) {}
-      cancelAnimationFrame(raf);
-      ws = ac = stream = node = an = wake = null;
-      body.className = 'idle';
+      endCall();
     }
     errDetail.textContent = msg;
     errPanel.style.display = 'flex';
@@ -549,6 +680,16 @@ body.call .label-end {
       ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
       await ac.resume();
 
+      // Master Output Gain for internal software volume control
+      masterGain = ac.createGain();
+      masterGain.gain.value = currentVolume;
+      masterGain.connect(ac.destination);
+
+      // Audio Analyzer for capsule equalizer
+      an = ac.createAnalyser();
+      an.fftSize = 256;
+      an.smoothingTimeConstant = 0.78;
+
       // Native mic capture without forcing hardware sampleRate
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -560,7 +701,7 @@ body.call .label-end {
 
       // User clicked 'End Call' while permission popup was open
       if (!active) {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} t.enabled = false; });
         try { ac && ac.close(); } catch (e) {}
         ac = stream = null;
         return;
@@ -568,11 +709,23 @@ body.call .label-end {
 
       try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {}
 
-      an = ac.createAnalyser();
-      an.fftSize = 128;
-      an.smoothingTimeConstant = 0.82;
+      // Register MediaSession for mobile telephony / media control
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'உங்கள் விஜய்',
+          artist: 'தமிழ்நாடு அரசு நலத்திட்டங்கள்',
+          album: 'Tamil Nadu Welfare Helpline'
+        });
+      }
+
+      // Visual sensitivity booster for citizen microphone into the equalizer
+      // (Routes to 'an' only, NEVER to 'ac.destination', completely avoiding caller echo)
+      micGain = ac.createGain();
+      micGain.gain.value = 3.5;
 
       const src = ac.createMediaStreamSource(stream);
+      src.connect(micGain);
+      micGain.connect(an);
 
       ready = false;
       newTurn = true;
@@ -607,12 +760,11 @@ body.call .label-end {
         output.fill(0);
       };
 
-      // Citizen mic feeds analyzer (drives equalizer live) and processor (streams to Gemini)
-      src.connect(an);
       src.connect(node);
       node.connect(ac.destination);
 
       ws = new WebSocket(wsUrl());
+      ws.binaryType = 'arraybuffer';
       ws.onmessage = onMsg;
       ws.onerror = err => {
         console.error('WebSocket connection error:', err);
@@ -628,11 +780,10 @@ body.call .label-end {
       console.error('Microphone or Audio initialization failed:', err);
       showError('மைக்ரோஃபோன் அனுமதி தேவை / Mic permission required: ' + err.message);
     }
-
   }
 
   // --------------------------------------------------------------------------
-  // End Voice Call
+  // End Voice Call & Complete Hardware Teardown
   // --------------------------------------------------------------------------
   function endCall() {
     if (!active && body.className === 'idle') return;
@@ -640,6 +791,7 @@ body.call .label-end {
     ready = false;
     newTurn = true;
 
+    // Send graceful hangup event before closing socket
     try {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'call.hangup' }));
@@ -647,17 +799,30 @@ body.call .label-end {
     } catch (e) {}
     try { ws && ws.close(); } catch (e) {}
 
+    // 1. Cut speaker playback immediately (no ghost audio)
+    if (masterGain && ac) {
+      try { masterGain.gain.setValueAtTime(0, ac.currentTime); } catch (e) {}
+    }
     stopAudio();
 
+    // 2. Turn off the microphone hardware (kills browser/OS mic indicator instantly)
     if (stream) {
-      stream.getTracks().forEach(t => t.stop());
+      stream.getTracks().forEach(t => {
+        try { t.stop(); } catch (e) {}
+        t.enabled = false;
+      });
     }
+
+    // 3. Disconnect and close audio graph
     try { node && node.disconnect(); } catch (e) {}
+    try { micGain && micGain.disconnect(); } catch (e) {}
+    try { masterGain && masterGain.disconnect(); } catch (e) {}
+    try { an && an.disconnect(); } catch (e) {}
     try { ac && ac.close(); } catch (e) {}
     try { wake && wake.release(); } catch (e) {}
 
     cancelAnimationFrame(raf);
-    ws = ac = stream = node = an = wake = null;
+    ws = ac = stream = node = an = micGain = masterGain = wake = null;
 
     body.className = 'idle';
     setTimeout(() => { if (!active) subs.textContent = ''; }, 350);
@@ -668,7 +833,11 @@ body.call .label-end {
   // --------------------------------------------------------------------------
   function onMsg(ev) {
     let m;
-    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    try {
+      m = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
 
     if (m.type === 'ready') {
       ready = true;
@@ -695,7 +864,7 @@ body.call .label-end {
   // Playback 24kHz PCM Int16 Audio from Gemini
   // --------------------------------------------------------------------------
   function playAudio(b) {
-    if (!ac || !active) return;
+    if (!ac || !active || !masterGain) return;
     const u = unb64(b), n = u.length >> 1;
     if (!n) return;
     const dv = new DataView(u.buffer), buf = ac.createBuffer(1, n, 24000), d = buf.getChannelData(0);
@@ -703,8 +872,8 @@ body.call .label-end {
 
     const s = ac.createBufferSource();
     s.buffer = buf;
-    s.connect(ac.destination);
-    if (an) s.connect(an); // Equalizer responds to incoming voice too
+    s.connect(masterGain); // Routed through Master Volume GainNode
+    if (an) s.connect(an);  // Equalizer responds to incoming voice too
 
     const lead = nextT > ac.currentTime ? 0 : 0.08;
     nextT = Math.max(nextT, ac.currentTime + lead + 0.02);
@@ -716,13 +885,17 @@ body.call .label-end {
   }
 
   function stopAudio() {
-    sources.forEach(s => { s.onended = null; try { s.stop(); } catch (e) {} try { s.disconnect(); } catch (e) {} });
+    sources.forEach(s => {
+      s.onended = null;
+      try { s.stop(); } catch (e) {}
+      try { s.disconnect(); } catch (e) {}
+    });
     sources.clear();
     nextT = 0;
   }
 
   // --------------------------------------------------------------------------
-  // Equalizer: Option 2 Fading Capsule Bars (25 Pills with Gradient)
+  // Equalizer: Fading Capsule Bars (25 Pills with Exact Real-Voice Response)
   // --------------------------------------------------------------------------
   const BAR_COUNT = 25;
   const smoothed = new Float32Array(BAR_COUNT);
@@ -761,21 +934,29 @@ body.call .label-end {
       an.getByteFrequencyData(data);
     }
 
+    const restHeight = 4; // Flat resting height when silent (no sine oscillation)
+
     for (let i = 0; i < BAR_COUNT; i++) {
       const distFromCenter = Math.abs(i - mid) / mid;
       let energy = 0;
 
-      if (data) {
-        const binIdx = Math.min(data.length - 1, 1 + Math.floor(Math.pow(1 - distFromCenter, 0.8) * 36));
-        energy = data[binIdx] / 255;
+      if (data && data.length > 0) {
+        // Human speech formants concentrated between 150Hz and 3500Hz
+        // Center bars map to primary vocal formants; outer bars to lower/higher voice edges
+        const vocalBin = Math.min(data.length - 1, 1 + Math.floor((1 - Math.pow(distFromCenter, 1.4)) * 14));
+        const rawVal = data[vocalBin] / 255;
+        // Clean noise floor: ignore room ambient silence below 0.07
+        if (rawVal > 0.07) {
+          energy = Math.min(1, ((rawVal - 0.07) / 0.93) * 2.2);
+        }
       }
 
-      // Elegant resting ripple when silent, responsive burst on speech
-      const idle = 4 + 2.5 * Math.sin(t / 380 + i * 0.45);
-      const targetHeight = Math.max(idle, Math.pow(energy, 1.25) * H * 0.9 * (1 - distFromCenter * 0.22));
+      // Stays completely still/flat in silence; pulses dynamically when voice is present
+      const targetHeight = restHeight + Math.pow(energy, 1.1) * (H - restHeight) * 0.95 * (1 - distFromCenter * 0.2);
 
-      smoothed[i] += (targetHeight - smoothed[i]) * 0.32;
-      const barHeight = Math.max(4, Math.min(H, smoothed[i]));
+      const smoothFactor = energy > 0 ? 0.38 : 0.24;
+      smoothed[i] += (targetHeight - smoothed[i]) * smoothFactor;
+      const barHeight = Math.max(restHeight, Math.min(H, smoothed[i]));
 
       const x = i * gap + (gap - barWidth) / 2;
       const y = (H - barHeight) / 2;
@@ -796,6 +977,7 @@ body.call .label-end {
   window.addEventListener('resize', () => active && sizeCanvas());
   window.addEventListener('beforeunload', () => { if (active) endCall(); });
   window.addEventListener('pagehide', () => { if (active) endCall(); });
+  window.addEventListener('unload', () => { if (active) endCall(); });
 })();
 </script>
 </body>

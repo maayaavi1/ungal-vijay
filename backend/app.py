@@ -113,44 +113,53 @@ class SchemeRepository:
             STOP_WORDS = {
                 "scheme", "schemes", "thittam", "thittangal", "for", "the", "a", "an",
                 "in", "of", "and", "to", "arasu", "government", "tamil", "nadu", "service",
-                "pathi", "solla", "sollunga", "irukka", "kedaikkuma", "details", "enna"
+                "pathi", "solla", "sollunga", "irukka", "kedaikkuma", "details", "enna",
+                "sevai", "sevai-kku", "help", "helpline", "scheme-kku", "scheme-gal", "about"
             }
             meaningful_terms = [t for t in raw_terms if t not in STOP_WORDS and len(t) > 2]
-            search_terms = meaningful_terms if meaningful_terms else raw_terms
 
-            scored = []
-            for s in results:
-                score = 0
-                name_text = f"{s.get('name_en') or ''} {s.get('name_ta') or ''}".lower()
-                benefit_text = f"{s.get('brief_benefit_en') or ''} {' '.join(s.get('special_conditions') or [])}".lower()
-                body_text = f"{s.get('objective_en') or ''} {s.get('benefits_en') or ''}".lower()
+            # Only perform keyword scoring if caller used specific meaningful terms.
+            # If query had ONLY generic stop words (e.g. 'government scheme', 'arasu thittam'),
+            # do NOT fall back to stop words to prevent false-positive scoring across all 25 schemes.
+            if meaningful_terms:
+                scored = []
+                for s in results:
+                    score = 0
+                    name_text = f"{s.get('name_en') or ''} {s.get('name_ta') or ''}".lower()
+                    benefit_text = f"{s.get('brief_benefit_en') or ''} {' '.join(s.get('special_conditions') or [])}".lower()
+                    body_text = f"{s.get('objective_en') or ''} {s.get('benefits_en') or ''}".lower()
 
-                for t in search_terms:
-                    if t in name_text:
-                        score += 5  # Direct match on official scheme name
-                    elif t in benefit_text:
-                        score += 3  # Direct match on 1-line benefit or tag
-                    elif t in body_text:
-                        score += 1  # Match in detailed description
+                    for t in meaningful_terms:
+                        if t in name_text:
+                            score += 5  # Direct match on official scheme name
+                        elif t in benefit_text:
+                            score += 3  # Direct match on 1-line benefit or tag
+                        elif t in body_text:
+                            score += 1  # Match in detailed description
 
-                if score > 0:
-                    scored.append((score, s))
+                    if score > 0:
+                        scored.append((score, s))
 
-            # Rank the highest-scoring schemes at the top
-            scored.sort(key=lambda x: x[0], reverse=True)
-            results = [s for score, s in scored]
+                # Rank the highest-scoring schemes at the top
+                scored.sort(key=lambda x: x[0], reverse=True)
+                results = [s for score, s in scored]
 
         # Helper for exact category token matching (prevents 'male' in 'female' or 'bc' in 'mbc')
         def match_tokens(field_val, target_val):
-            if not field_val:
+            if not field_val or not target_val:
                 return True
             if isinstance(field_val, list):
-                categories = [str(x).strip().lower() for x in field_val]
+                categories = set(str(x).strip().lower() for x in field_val if str(x).strip())
             else:
-                categories = [x.strip().lower() for x in str(field_val).replace('/', ',').split(',')]
+                categories = set(x.strip().lower() for x in str(field_val).replace('/', ',').split(',') if x.strip())
             if 'any' in categories or 'all' in categories:
                 return True
-            return target_val.strip().lower() in categories
+            if isinstance(target_val, list):
+                targets = set(str(x).strip().lower() for x in target_val if str(x).strip())
+            else:
+                targets = set(x.strip().lower() for x in str(target_val).replace('/', ',').split(',') if x.strip())
+            # Exact token intersection prevents substring collisions ('male' != 'female', 'bc' != 'mbc')
+            return bool(targets & categories)
 
         # 2. Gender filtering (exact category match)
         if gender:
@@ -537,8 +546,9 @@ async def websocket_call_endpoint(client_ws: WebSocket):
             raise RuntimeError(f"Gemini Live rejected connection on all candidate models ({candidates}). Check API key access in Google AI Studio.")
 
         try:
-            # Stream A: Forward client microphone audio / commands to Gemini
+            # Stream A: Forward client microphone audio / commands to Gemini Live
             async def forward_client_to_gemini():
+                audio_packets_sent = 0
                 try:
                     while True:
                         message = await client_ws.receive()
@@ -547,108 +557,126 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                             logger.info("Browser WebSocket disconnected.")
                             break
 
+                        pcm_bytes = None
                         if message.get("bytes"):
-                            # Raw PCM 16kHz binary chunk from browser
-                            pcm_chunk = message["bytes"]
-                            await session.send_realtime_input(
-                                media=types.Blob(
-                                    data=pcm_chunk,
-                                    mime_type="audio/pcm;rate=16000"
-                                )
-                            )
+                            pcm_bytes = message["bytes"]
                         elif message.get("text"):
                             try:
                                 event = json.loads(message["text"])
                             except Exception:
                                 continue
                             event_type = event.get("type")
-
                             if event_type == "audio_chunk":
                                 raw_base64 = event.get("audio", "")
                                 if raw_base64:
                                     pcm_bytes = base64.b64decode(raw_base64)
-                                    await session.send_realtime_input(
-                                        media=types.Blob(
-                                            data=pcm_bytes,
-                                            mime_type="audio/pcm;rate=16000"
-                                        )
-                                    )
                             elif event_type == "call.hangup":
                                 logger.info("Caller hung up from browser.")
                                 break
+
+                        if pcm_bytes:
+                            # Forward exact protobuf realtimeInput structure to Gemini Live
+                            b64_audio = base64.b64encode(pcm_bytes).decode("utf-8")
+                            realtime_payload = {
+                                "realtimeInput": {
+                                    "mediaChunks": [
+                                        {
+                                            "mimeType": "audio/pcm;rate=16000",
+                                            "data": b64_audio
+                                        }
+                                    ]
+                                }
+                            }
+                            # Send directly to the active websocket connection
+                            if hasattr(session, '_ws') and session._ws:
+                                await session._ws.send(json.dumps(realtime_payload))
+                            else:
+                                await session.send_realtime_input(
+                                    media=types.Blob(data=pcm_bytes, mime_type="audio/pcm;rate=16000")
+                                )
+                            audio_packets_sent += 1
+                            if audio_packets_sent % 50 == 0:
+                                logger.info(f"Streamed {audio_packets_sent} mic packets to Gemini Live.")
                 except (WebSocketDisconnect, asyncio.CancelledError):
                     logger.info("Browser WebSocket disconnected.")
                 except Exception as e:
                     logger.error(f"Error in client-to-gemini stream: {e}")
 
-            # Stream B: Receive Gemini audio/subtitles + execute tools (persists across turns)
+            # Stream B: Receive Gemini audio/subtitles + execute tools (continuous multi-turn stream)
             async def forward_gemini_to_client():
                 try:
                     while True:
-                        turn_messages = 0
-                        async for response in session.receive():
-                            turn_messages += 1
-                            # 1. Handle Tool / Function Calls
-                            if response.tool_call:
-                                function_responses = []
-                                for fc in response.tool_call.function_calls:
-                                    args = fc.args or {}
-                                    logger.info(f"Gemini invoked tool: {fc.name} with args {args}")
-                                    try:
-                                        result = await execute_tool(fc.name, args)
-                                    except Exception as e:
-                                        logger.exception(f"Tool {fc.name} execution failed: {e}")
-                                        result = {"error": f"Data lookup error: {str(e)}"}
+                        # Direct call to session._receive() persists indefinitely across all conversational turns
+                        response = await session._receive()
+                        if not response:
+                            continue
 
-                                    function_responses.append(
-                                        types.FunctionResponse(
-                                            name=fc.name,
-                                            id=fc.id,
-                                            response={"result": result}
-                                        )
+                        # 1. Handle Tool / Function Calls
+                        if response.tool_call:
+                            function_responses = []
+                            for fc in response.tool_call.function_calls:
+                                args = fc.args or {}
+                                logger.info(f"Gemini invoked tool: {fc.name} with args {args}")
+                                try:
+                                    result = await execute_tool(fc.name, args)
+                                except Exception as e:
+                                    logger.exception(f"Tool {fc.name} execution failed: {e}")
+                                    result = {"error": f"Data lookup error: {str(e)}"}
+
+                                function_responses.append(
+                                    types.FunctionResponse(
+                                        name=fc.name,
+                                        id=fc.id,
+                                        response={"result": result}
                                     )
+                                )
 
-                                # Return tool output back to Gemini
-                                await session.send_tool_response(function_responses=function_responses)
+                            # Return tool output back to Gemini
+                            await session.send_tool_response(function_responses=function_responses)
 
-                            sc = response.server_content
-                            if not sc:
-                                continue
+                        sc = response.server_content
+                        if not sc:
+                            continue
 
-                            # Interruption event: User started talking, Gemini cut audio
-                            if sc.interrupted:
-                                await client_ws.send_json({"type": "interrupted"})
+                        # Interruption event: User started talking, Gemini cut audio
+                        if sc.interrupted:
+                            logger.info("Gemini playback interrupted by caller speech.")
+                            await client_ws.send_json({"type": "interrupted"})
 
-                            # Log caller speech when transcribed (verifies mic pipeline)
-                            if sc.input_transcription and sc.input_transcription.text:
-                                logger.info(f"Caller said: {sc.input_transcription.text}")
+                        # Log caller speech when transcribed (verifies mic pipeline)
+                        if sc.input_transcription and sc.input_transcription.text:
+                            logger.info(f"Caller said: {sc.input_transcription.text}")
 
-                            # Extract real-time speech subtitles from output_transcription
-                            if sc.output_transcription and sc.output_transcription.text:
-                                await client_ws.send_json({
-                                    "type": "ai_transcript_delta",
-                                    "delta": sc.output_transcription.text
-                                })
+                        # Extract real-time speech subtitles from output_transcription
+                        if sc.output_transcription and sc.output_transcription.text:
+                            logger.info(f"AI Subtitle (output_transcription): {sc.output_transcription.text}")
+                            await client_ws.send_json({
+                                "type": "ai_transcript_delta",
+                                "delta": sc.output_transcription.text
+                            })
 
-                            if sc.model_turn:
-                                for part in sc.model_turn.parts:
-                                    # Audio chunk (24kHz PCM)
-                                    if part.inline_data and part.inline_data.data:
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                                        await client_ws.send_json({
-                                            "type": "audio_delta",
-                                            "delta": audio_b64
-                                        })
+                        if sc.model_turn:
+                            for part in sc.model_turn.parts:
+                                # Extract real-time speech subtitles from text part if provided
+                                if part.text:
+                                    logger.info(f"AI Subtitle (model_turn.part.text): {part.text}")
+                                    await client_ws.send_json({
+                                        "type": "ai_transcript_delta",
+                                        "delta": part.text
+                                    })
+                                # Audio chunk (24kHz PCM)
+                                if part.inline_data and part.inline_data.data:
+                                    audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                                    await client_ws.send_json({
+                                        "type": "audio_delta",
+                                        "delta": audio_b64
+                                    })
 
-                            if sc.turn_complete:
-                                await client_ws.send_json({"type": "turn_complete"})
+                        if sc.turn_complete:
+                            logger.info("Turn complete from Gemini. Session remains open and listening.")
+                            await client_ws.send_json({"type": "turn_complete"})
 
-                        # If receive() ended without yielding any message, the session was closed
-                        if turn_messages == 0:
-                            logger.info("Gemini receive loop ended without messages.")
-                            break
-
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, WebSocketDisconnect):
                     pass
                 except Exception as e:
                     logger.error(f"Error in gemini-to-client stream: {e}")
@@ -681,6 +709,11 @@ async def websocket_call_endpoint(client_ws: WebSocket):
                 t1.cancel()
             if 't2' in locals() and t2 and not t2.done():
                 t2.cancel()
+            if session and hasattr(session, '_ws') and session._ws:
+                try:
+                    await session._ws.close()
+                except Exception:
+                    pass
             if connected_cm:
                 try:
                     await connected_cm.__aexit__(None, None, None)
