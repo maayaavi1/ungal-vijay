@@ -429,93 +429,6 @@ body.call .label-end {
 .error-dismiss-btn:active {
   transform: scale(0.96);
 }
-
-/* 4. Volume Control Dock */
-.volume-dock {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(32, 41, 35, 0.05);
-  border: 1px solid rgba(32, 41, 35, 0.08);
-  border-radius: 20px;
-  padding: 6px 14px;
-  margin-top: 2px;
-  box-shadow: 0 1px 3px rgba(32, 41, 35, 0.04);
-}
-
-.volume-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  outline: none;
-  transition: color 0.2s ease, transform 0.15s ease;
-}
-
-.volume-btn:hover {
-  color: var(--text);
-  transform: scale(1.08);
-}
-
-.volume-btn:active {
-  transform: scale(0.92);
-}
-
-.volume-btn svg {
-  width: 19px;
-  height: 19px;
-  fill: currentColor;
-}
-
-.volume-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 90px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(32, 41, 35, 0.18);
-  outline: none;
-  cursor: pointer;
-}
-
-.volume-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--green);
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  transition: transform 0.15s ease;
-}
-
-.volume-slider::-webkit-slider-thumb:active {
-  transform: scale(1.2);
-}
-
-.volume-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--green);
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-
-.volume-percent {
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--muted);
-  min-width: 34px;
-  text-align: right;
-  letter-spacing: -0.01em;
-}
 </style>
 </head>
 <body class="idle">
@@ -541,13 +454,6 @@ body.call .label-end {
       </div>
       <div class="subtitle-stream">
         <p class="subtitle-text" id="subs" aria-live="polite"></p>
-      </div>
-      <div class="volume-dock" id="volume-dock" aria-label="ஒலி அளவு கட்டுப்பாடு">
-        <button type="button" class="volume-btn" id="vol-mute-btn" aria-label="ஒலி இயக்கு / முடக்கு">
-          <svg id="vol-icon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-        </button>
-        <input type="range" class="volume-slider" id="vol-slider" min="0" max="1" step="0.05" value="1" aria-label="ஒலி அளவு">
-        <span class="volume-percent" id="vol-text">100%</span>
       </div>
     </div>
 
@@ -585,6 +491,15 @@ body.call .label-end {
   'use strict';
 
   // --------------------------------------------------------------------------
+  // Global State (Declared at top, matching Google's script.js)
+  // --------------------------------------------------------------------------
+  let active = false;
+  let client = null;
+  let streamer = null;
+  let player = null;
+  let wakeLock = null;
+
+  // --------------------------------------------------------------------------
   // DOM References & Helper
   // --------------------------------------------------------------------------
   const $ = s => document.querySelector(s);
@@ -595,50 +510,6 @@ body.call .label-end {
   const errPanel = $('#error-panel');
   const errDetail = $('#error-detail');
   const errDismiss = $('#error-dismiss-btn');
-
-  // Volume Controller State
-  let currentVolume = parseFloat(localStorage.getItem('ungal_vijay_vol') || '1.0');
-  let prevVolume = currentVolume > 0 ? currentVolume : 1.0;
-  const volSlider = $('#vol-slider');
-  const volText = $('#vol-text');
-  const volMuteBtn = $('#vol-mute-btn');
-  const volIcon = $('#vol-icon');
-
-  function updateVolumeUI(v) {
-    if (volSlider) volSlider.value = v;
-    if (volText) volText.textContent = Math.round(v * 100) + '%';
-    if (player) player.setVolume(v);
-    if (volIcon) {
-      if (v === 0) {
-        volIcon.innerHTML = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
-      } else {
-        volIcon.innerHTML = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
-      }
-    }
-  }
-
-  if (volSlider) {
-    volSlider.value = currentVolume;
-    updateVolumeUI(currentVolume);
-    volSlider.addEventListener('input', (e) => {
-      currentVolume = parseFloat(e.target.value);
-      localStorage.setItem('ungal_vijay_vol', currentVolume);
-      updateVolumeUI(currentVolume);
-    });
-  }
-
-  if (volMuteBtn) {
-    volMuteBtn.addEventListener('click', () => {
-      if (currentVolume > 0) {
-        prevVolume = currentVolume;
-        currentVolume = 0;
-      } else {
-        currentVolume = prevVolume > 0 ? prevVolume : 1.0;
-      }
-      localStorage.setItem('ungal_vijay_vol', currentVolume);
-      updateVolumeUI(currentVolume);
-    });
-  }
 
   function showError(msg) {
     console.error('Call Error:', msg);
@@ -730,20 +601,16 @@ body.call .label-end {
   }
 
   // --------------------------------------------------------------------------
-  // Core State & Google Architecture
-  // --------------------------------------------------------------------------
-  let active = false;
-  let client = null;
-  let streamer = null;
-  let player = null;
-  let wakeLock = null;
-
   // Backend API URL (Routes to Railway when hosted on Cloudflare Pages)
+  // --------------------------------------------------------------------------
   const RAILWAY_BACKEND = 'https://ungal-vijay-production.up.railway.app';
   const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
     ? ''
     : RAILWAY_BACKEND;
 
+  // --------------------------------------------------------------------------
+  // Start Call (Direct Gemini Live Connection via Google's Solved Client)
+  // --------------------------------------------------------------------------
   async function startCall() {
     if (active) return;
     active = true;
@@ -824,7 +691,6 @@ body.call .label-end {
       // Step 4: Initialize Google Reference Audio Player (24kHz)
       player = new AudioPlayer();
       await player.init();
-      player.setVolume(currentVolume);
 
       // Step 5: Connect directly to Gemini Live WebSocket
       await client.connect();
