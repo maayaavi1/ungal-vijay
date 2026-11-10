@@ -178,22 +178,35 @@ canvas#eq {
   display: block;
 }
 
+/* Subtitle Stream (Max 3 lines, fixed container height, subtle faded appearance) */
 .subtitle-stream {
   min-height: 48px;
+  max-height: 4.2em;
   max-width: 420px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 16px;
+  overflow: hidden;
 }
 
 .subtitle-text {
-  font-size: 1.08rem;
+  font-size: 0.84rem;
   font-weight: 500;
-  line-height: 1.5;
-  color: var(--text);
+  line-height: 1.45;
+  color: var(--muted);
   text-align: center;
   letter-spacing: -0.01em;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.subtitle-text.faded {
+  opacity: 0;
 }
 
 /* 3. Bottom Action Dock: Velvet Core Button (62px) */
@@ -524,6 +537,48 @@ body.call .label-end {
   }
 
   // --------------------------------------------------------------------------
+  // Subtitle Manager (Max 3 lines, sliding window, auto-fade)
+  // --------------------------------------------------------------------------
+  let currentSubtitleText = '';
+  let subsFadeTimer = null;
+
+  function appendSubtitle(textChunk) {
+    if (!textChunk) return;
+    subs.classList.remove('faded');
+    clearTimeout(subsFadeTimer);
+
+    currentSubtitleText += textChunk;
+
+    // Sliding window: keep the last ~140-160 characters so it fits 3 lines without growing
+    if (currentSubtitleText.length > 170) {
+      const trimmed = currentSubtitleText.slice(-135);
+      const firstSpace = trimmed.indexOf(' ');
+      currentSubtitleText = firstSpace > 0 ? '...' + trimmed.slice(firstSpace) : trimmed;
+    }
+    subs.textContent = currentSubtitleText;
+  }
+
+  function scheduleSubtitleFade() {
+    clearTimeout(subsFadeTimer);
+    subsFadeTimer = setTimeout(() => {
+      subs.classList.add('faded');
+      setTimeout(() => {
+        if (subs.classList.contains('faded')) {
+          currentSubtitleText = '';
+          subs.textContent = '';
+        }
+      }, 500);
+    }, 2800);
+  }
+
+  function clearSubtitles() {
+    clearTimeout(subsFadeTimer);
+    currentSubtitleText = '';
+    subs.textContent = '';
+    subs.classList.remove('faded');
+  }
+
+  // --------------------------------------------------------------------------
   // Equalizer Visualizer (25 Capsule Bars, Pure Memory Array, No AudioNodes)
   // --------------------------------------------------------------------------
   const BAR_COUNT = 25;
@@ -531,12 +586,13 @@ body.call .label-end {
   let W = 0, H = 0, dpr = 1;
   let raf = null;
   let speakerEnergy = 0;
+  let micEnergy = 0;
 
   function sizeCanvas() {
     dpr = window.devicePixelRatio || 1;
     const rect = cv.getBoundingClientRect();
-    W = rect.width;
-    H = rect.height;
+    W = rect.width || cv.parentElement?.clientWidth || 224;
+    H = rect.height || 54;
     cv.width = Math.round(W * dpr);
     cv.height = Math.round(H * dpr);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -546,6 +602,8 @@ body.call .label-end {
     if (!active) return;
     raf = requestAnimationFrame(drawEqualizer);
 
+    if (W <= 0 || H <= 0) sizeCanvas();
+
     g.clearRect(0, 0, W, H);
     g.fillStyle = '#202923';
 
@@ -554,13 +612,16 @@ body.call .label-end {
     const restHeight = 4;
     const mid = (BAR_COUNT - 1) / 2;
 
-    speakerEnergy *= 0.88; // Smooth decay
+    // Read combined energy from Vijay's voice or caller's voice
+    const currentEnergy = Math.max(speakerEnergy, micEnergy);
+    speakerEnergy *= 0.85;
+    micEnergy *= 0.85;
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const distFromCenter = Math.abs(i - mid) / mid;
       let energy = 0;
-      if (speakerEnergy > 0.04) {
-        energy = Math.min(1.0, speakerEnergy * (1 - distFromCenter * 0.35));
+      if (currentEnergy > 0.03) {
+        energy = Math.min(1.0, currentEnergy * (1 - distFromCenter * 0.35));
       }
       const targetHeight = restHeight + Math.pow(energy, 1.1) * (H - restHeight) * 0.95;
       const smoothFactor = energy > 0 ? 0.40 : 0.22;
@@ -581,25 +642,6 @@ body.call .label-end {
     }
   }
 
-  function updateSpeakerEnergy(base64Audio) {
-    try {
-      const bin = atob(base64Audio);
-      const len = bin.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-      const int16 = new Int16Array(bytes.buffer);
-      let sum = 0;
-      const step = Math.max(1, Math.floor(int16.length / 64));
-      let count = 0;
-      for (let i = 0; i < int16.length; i += step) {
-        const v = int16[i] / 32768.0;
-        sum += v * v;
-        count++;
-      }
-      speakerEnergy = Math.min(1.0, Math.sqrt(sum / count) * 4.5);
-    } catch (e) {}
-  }
-
   // --------------------------------------------------------------------------
   // Backend API URL (Routes to Railway when hosted on Cloudflare Pages)
   // --------------------------------------------------------------------------
@@ -616,6 +658,7 @@ body.call .label-end {
     active = true;
 
     body.className = 'call';
+    clearSubtitles();
     subs.textContent = 'இணைக்கிறது... (Connecting...)';
     if (errPanel) errPanel.style.display = 'none';
 
@@ -689,14 +732,27 @@ body.call .label-end {
       };
 
       // Step 4: Initialize Google Reference Audio Player (24kHz)
-      player = new AudioPlayer();
+      if (!player) player = new AudioPlayer();
       await player.init();
+
+      // Connect energy hook to player for equalizer & echo suppression
+      player.onAudioLevel = (rms) => {
+        speakerEnergy = Math.min(1.0, rms * 4.5);
+        if (streamer) streamer.isModelSpeaking = (rms > 0.02);
+      };
 
       // Step 5: Connect directly to Gemini Live WebSocket
       await client.connect();
 
       // Step 6: Start microphone streaming via Google AudioStreamer (16kHz)
-      streamer = new AudioStreamer(client);
+      if (!streamer) streamer = new AudioStreamer(client);
+      streamer.client = client;
+
+      // Connect energy hook to streamer for equalizer
+      streamer.onAudioLevel = (rms) => {
+        micEnergy = Math.min(1.0, rms * 4.5);
+      };
+
       await streamer.start();
 
     } catch (err) {
@@ -712,7 +768,7 @@ body.call .label-end {
   async function handleMessage(message) {
     if (message.type === MultimodalLiveResponseType.SETUP_COMPLETE) {
       console.log('🏁 Gemini Live setup complete. Prompting opening greeting...');
-      subs.textContent = '';
+      clearSubtitles();
       if (client && client.connected) {
         client.sendClientContentMessage(
           "Call connected. Greet the citizen now with the official opening greeting in spoken Tanglish.",
@@ -725,14 +781,13 @@ body.call .label-end {
     if (message.type === MultimodalLiveResponseType.AUDIO) {
       if (player) {
         player.play(message.data);
-        updateSpeakerEnergy(message.data);
       }
       return;
     }
 
     if (message.type === MultimodalLiveResponseType.OUTPUT_TRANSCRIPTION) {
       if (message.data && message.data.text) {
-        subs.textContent += message.data.text;
+        appendSubtitle(message.data.text);
       }
       return;
     }
@@ -740,13 +795,14 @@ body.call .label-end {
     if (message.type === MultimodalLiveResponseType.INTERRUPTED) {
       console.log('🛑 Model interrupted by user voice');
       if (player) player.interrupt();
-      subs.textContent = '';
+      clearSubtitles();
       speakerEnergy = 0;
       return;
     }
 
     if (message.type === MultimodalLiveResponseType.TURN_COMPLETE) {
       console.log('Turn complete');
+      scheduleSubtitleFade();
       return;
     }
 
@@ -790,7 +846,8 @@ body.call .label-end {
       smoothed.fill(4);
     }
     speakerEnergy = 0;
-    subs.textContent = '';
+    micEnergy = 0;
+    clearSubtitles();
 
     if (streamer) {
       try { streamer.destroy(); } catch (e) {}
@@ -816,7 +873,22 @@ body.call .label-end {
     }
   }
 
-  $('#btn-start').addEventListener('click', startCall);
+  // Wire buttons with synchronous iOS touch gesture unlock
+  $('#btn-start').addEventListener('click', () => {
+    // Synchronous unlock for iOS Safari
+    if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
+      try {
+        if (!player) player = new AudioPlayer();
+        player.warmup();
+        if (!streamer) streamer = new AudioStreamer(client);
+        streamer.warmup();
+      } catch (e) {
+        console.warn('Audio warmup notice:', e);
+      }
+    }
+    startCall();
+  });
+
   $('#btn-end').addEventListener('click', endCall);
 
   window.addEventListener('resize', () => active && sizeCanvas());

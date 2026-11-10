@@ -15,6 +15,23 @@ class AudioStreamer {
     this.audioSource = null;
     this.isStreaming = false;
     this.sampleRate = 16000; // Gemini requires 16kHz
+    this.onAudioLevel = null; // Audio level callback for visualizer
+    this.isModelSpeaking = false; // Flag for echo suppression
+  }
+
+  /**
+   * Synchronous warmup for iOS Safari (must be called inside user tap)
+   */
+  warmup() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)({
+        sampleRate: this.sampleRate,
+      });
+    }
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume();
+    }
   }
 
   /**
@@ -26,9 +43,8 @@ class AudioStreamer {
       return;
     }
     try {
-      // Build audio constraints
+      // Build audio constraints (Do not force hardware sampleRate on mobile/iOS)
       const audioConstraints = {
-        sampleRate: this.sampleRate,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -68,6 +84,26 @@ class AudioStreamer {
 
           if (event.data.type === "audio") {
             const inputData = event.data.data;
+
+            // Calculate microphone RMS for visualizer
+            let rms = 0;
+            if (this.onAudioLevel || this.isModelSpeaking) {
+              let sum = 0;
+              const step = Math.max(1, Math.floor(inputData.length / 32));
+              let count = 0;
+              for (let i = 0; i < inputData.length; i += step) {
+                sum += inputData[i] * inputData[i];
+                count++;
+              }
+              rms = Math.sqrt(sum / count);
+              if (this.onAudioLevel) this.onAudioLevel(rms);
+            }
+
+            // Echo suppression: if Vijay is speaking and mic audio is just quiet room bleed, suppress it
+            if (this.isModelSpeaking && rms < 0.05) {
+              return;
+            }
+
             const pcmData = this.convertToPCM16(inputData);
             const base64Audio = this.arrayBufferToBase64(pcmData);
 
@@ -427,6 +463,22 @@ class AudioPlayer {
     this.initPromise = null;
     this.volume = 1.0;
     this.sampleRate = 24000; // Gemini outputs at 24kHz
+    this.onAudioLevel = null; // Audio level callback for visualizer
+  }
+
+  /**
+   * Synchronous warmup for iOS Safari (must be called inside user tap)
+   */
+  warmup() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)({
+        sampleRate: this.sampleRate,
+      });
+    }
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume();
+    }
   }
 
   /**
@@ -439,10 +491,12 @@ class AudioPlayer {
     this.initPromise = (async () => {
       try {
         // Create audio context at 24kHz to match Gemini
-        this.audioContext = new (window.AudioContext ||
-          window.webkitAudioContext)({
-          sampleRate: this.sampleRate,
-        });
+        if (!this.audioContext) {
+          this.audioContext = new (window.AudioContext ||
+            window.webkitAudioContext)({
+            sampleRate: this.sampleRate,
+          });
+        }
 
         // Resume immediately since we are in a user-initiated gesture
         if (this.audioContext.state === "suspended") {
@@ -502,11 +556,23 @@ class AudioPlayer {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      // Convert PCM16 LE to Float32
+      // Convert PCM16 LE to Float32 and calculate speaker RMS
       const inputArray = new Int16Array(bytes.buffer);
       const float32Data = new Float32Array(inputArray.length);
+      let sum = 0;
+      const step = Math.max(1, Math.floor(inputArray.length / 32));
+      let count = 0;
       for (let i = 0; i < inputArray.length; i++) {
-        float32Data[i] = inputArray[i] / 32768;
+        const val = inputArray[i] / 32768;
+        float32Data[i] = val;
+        if (i % step === 0) {
+          sum += val * val;
+          count++;
+        }
+      }
+
+      if (this.onAudioLevel && count > 0) {
+        this.onAudioLevel(Math.sqrt(sum / count));
       }
 
       // Send to worklet for playback
@@ -523,6 +589,9 @@ class AudioPlayer {
   interrupt() {
     if (this.workletNode) {
       this.workletNode.port.postMessage("interrupt");
+    }
+    if (this.onAudioLevel) {
+      this.onAudioLevel(0);
     }
   }
 

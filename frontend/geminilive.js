@@ -193,7 +193,7 @@ class GeminiLiveAPI {
       silence_duration_ms: 2000,
       prefix_padding_ms: 500,
       end_of_speech_sensitivity: "END_SENSITIVITY_UNSPECIFIED",
-      start_of_speech_sensitivity: "START_SENSITIVITY_UNSPECIFIED",
+      start_of_speech_sensitivity: "START_SENSITIVITY_LOW",
     };
 
     this.activityHandling = "ACTIVITY_HANDLING_UNSPECIFIED";
