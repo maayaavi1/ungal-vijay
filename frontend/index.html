@@ -613,7 +613,8 @@ body.call .label-end {
     const mid = (BAR_COUNT - 1) / 2;
 
     // Read combined energy from Vijay's voice or caller's voice
-    const currentEnergy = Math.max(speakerEnergy, micEnergy);
+    let currentEnergy = Math.max(speakerEnergy || 0, micEnergy || 0);
+    if (!Number.isFinite(currentEnergy) || isNaN(currentEnergy)) currentEnergy = 0;
     speakerEnergy *= 0.85;
     micEnergy *= 0.85;
 
@@ -736,9 +737,18 @@ body.call .label-end {
       await player.init();
 
       // Connect energy hook to player for equalizer & echo suppression
+      let modelSpeakingTimer = null;
       player.onAudioLevel = (rms) => {
         speakerEnergy = Math.min(1.0, rms * 4.5);
-        if (streamer) streamer.isModelSpeaking = (rms > 0.02);
+        if (streamer) {
+          if (rms > 0.02) {
+            streamer.isModelSpeaking = true;
+            clearTimeout(modelSpeakingTimer);
+            modelSpeakingTimer = setTimeout(() => {
+              if (streamer) streamer.isModelSpeaking = false;
+            }, 300);
+          }
+        }
       };
 
       // Step 5: Connect directly to Gemini Live WebSocket
@@ -771,7 +781,7 @@ body.call .label-end {
       clearSubtitles();
       if (client && client.connected) {
         client.sendClientContentMessage(
-          "Call connected. Greet the citizen now with the official opening greeting in spoken Tanglish.",
+          "Call connected. Greet the citizen now with the official opening greeting.",
           true
         );
       }
@@ -795,6 +805,7 @@ body.call .label-end {
     if (message.type === MultimodalLiveResponseType.INTERRUPTED) {
       console.log('🛑 Model interrupted by user voice');
       if (player) player.interrupt();
+      if (streamer) streamer.isModelSpeaking = false;
       clearSubtitles();
       speakerEnergy = 0;
       return;
@@ -802,6 +813,7 @@ body.call .label-end {
 
     if (message.type === MultimodalLiveResponseType.TURN_COMPLETE) {
       console.log('Turn complete');
+      if (streamer) streamer.isModelSpeaking = false;
       scheduleSubtitleFade();
       return;
     }

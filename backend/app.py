@@ -57,11 +57,10 @@ for p in prompt_candidates:
             logger.warning(f"Could not load system prompt from {p}: {e}")
 
 if not SYSTEM_PROMPT:
-    SYSTEM_PROMPT = "You are the Tamil Nadu Government Welfare Schemes Voice AI helpline counselor. Speak in respectful spoken Tanglish."
+    SYSTEM_PROMPT = "You are the Tamil Nadu Government Welfare Schemes Voice AI helpline counselor. Speak in simple, respectful spoken Tamil with everyday public administrative nouns."
 
 OPENING_GREETING = (
-    "Vanakkam! Tamil Nadu Arasu Nala Thittangal sevai-kku ungalai anbodu varaverkirom. "
-    "Ungalukku edhaavadhu kurippitta thittam pathi therinjukanuma, illa ungalukku enna thittangal porundhum nu paarkalaama?"
+    "Vanakkam! ithu Tamil Nadu Arasu Thittangal helpline. Ungalukku enna thagaval venum sollunga?"
 )
 
 # Initialize Google GenAI client safely
@@ -550,7 +549,7 @@ app.add_middleware(
 async def health_check():
     return {
         "status": "ok",
-        "version": "v2.0",
+        "version": "v3.0",
         "cached_schemes": len(db_repo.cached_schemes),
         "model": GEMINI_LIVE_MODEL,
         "voice": GEMINI_LIVE_VOICE
@@ -574,13 +573,15 @@ async def create_ephemeral_token():
         now = datetime.datetime.now(tz=datetime.timezone.utc)
         expire_time = now + datetime.timedelta(minutes=30)
         
-        token = ai_client.auth_tokens.create(
-            config={
-                "uses": 1,
-                "expire_time": expire_time.isoformat(),
-                "new_session_expire_time": (now + datetime.timedelta(minutes=5)).isoformat(),
-                "http_options": {"api_version": "v1alpha"},
-            }
+        token = await asyncio.to_thread(
+            lambda: ai_client.auth_tokens.create(
+                config={
+                    "uses": 1,
+                    "expire_time": expire_time.isoformat(),
+                    "new_session_expire_time": (now + datetime.timedelta(minutes=5)).isoformat(),
+                    "http_options": {"api_version": "v1alpha"},
+                }
+            )
         )
         return {
             "token": token.name,
@@ -664,5 +665,5 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting Ungal Vijay v2 on http://{HOST}:{PORT}")
+    logger.info(f"Starting Ungal Vijay v3 on http://{HOST}:{PORT}")
     uvicorn.run("app:app", host=HOST, port=PORT, reload=False)

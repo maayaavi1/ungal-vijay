@@ -66,7 +66,10 @@ class AudioStreamer {
           window.webkitAudioContext)({
           sampleRate: this.sampleRate,
         });
+      }
 
+      // Ensure audio worklet is ALWAYS created even if audioContext was pre-warmed
+      if (!this.audioWorklet) {
         // Load the audio worklet module
         await this.audioContext.audioWorklet.addModule(
           "audio-processors/capture.worklet.js"
@@ -140,6 +143,7 @@ class AudioStreamer {
    */
   stop() {
     this.isStreaming = false;
+    this.isModelSpeaking = false;
 
     if (this.audioSource) {
       this.audioSource.disconnect();
@@ -163,6 +167,10 @@ class AudioStreamer {
    */
   destroy() {
     this.stop();
+    if (this.audioWorklet) {
+      try { this.audioWorklet.disconnect(); } catch (e) {}
+      this.audioWorklet = null;
+    }
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
@@ -557,12 +565,13 @@ class AudioPlayer {
       }
 
       // Convert PCM16 LE to Float32 and calculate speaker RMS
-      const inputArray = new Int16Array(bytes.buffer);
-      const float32Data = new Float32Array(inputArray.length);
+      const sampleCount = Math.floor(len / 2);
+      const inputArray = new Int16Array(bytes.buffer, 0, sampleCount);
+      const float32Data = new Float32Array(sampleCount);
       let sum = 0;
-      const step = Math.max(1, Math.floor(inputArray.length / 32));
+      const step = Math.max(1, Math.floor(sampleCount / 32));
       let count = 0;
-      for (let i = 0; i < inputArray.length; i++) {
+      for (let i = 0; i < sampleCount; i++) {
         const val = inputArray[i] / 32768;
         float32Data[i] = val;
         if (i % step === 0) {
@@ -609,8 +618,22 @@ class AudioPlayer {
    * Clean up resources
    */
   destroy() {
+    if (this.workletNode) {
+      try {
+        this.workletNode.disconnect();
+      } catch (e) {}
+      this.workletNode = null;
+    }
+    if (this.gainNode) {
+      try {
+        this.gainNode.disconnect();
+      } catch (e) {}
+      this.gainNode = null;
+    }
     if (this.audioContext) {
-      this.audioContext.close();
+      try {
+        this.audioContext.close();
+      } catch (e) {}
       this.audioContext = null;
     }
     this.isInitialized = false;
